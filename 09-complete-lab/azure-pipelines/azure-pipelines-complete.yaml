@@ -1,0 +1,209 @@
+# Azure Pipelines — Complete Lab Pipeline
+#
+# Uses BOTH JFrog (dependencies) and Harbor (Docker images):
+#   1. Resolve build dependencies via JFrog (npm/Maven/Go proxy)
+#   2. Build Docker image (base images cached through JFrog Docker remote)
+#   3. Trivy vulnerability scan
+#   4. Push application image to Harbor
+#   5. Push Helm chart to JFrog Helm repo
+#   6. Update per-env Helm values → Argo CD deploys
+#
+# Stages: Build → Dev (auto) → UAT (approval) → Prod (approval)
+
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  - group: harbor-credentials
+  - group: jfrog-credentials
+  - name: imageRepository
+    value: 'my-app/sample-web'
+  - name: tag
+    value: '$(Build.BuildId)'
+  - name: helmChartPath
+    value: '09-complete-lab/helm-chart'
+
+stages:
+  # ───────────────────────────────────────────
+  # Stage 1: Build & Push
+  # ───────────────────────────────────────────
+  - stage: Build
+    displayName: 'Build, Scan & Push'
+    jobs:
+      - job: BuildPushScan
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          # Configure JFrog CLI for dependency resolution
+          - task: JFrogToolsInstaller@1
+            inputs:
+              artifactoryConnection: 'jfrog-service-connection'
+
+          # Configure npm to use JFrog virtual repo
+          - script: |
+              jfrog rt npmc \
+                --repo-resolve npm-virtual \
+                --repo-deploy npm-local
+            displayName: 'Configure npm → JFrog'
+
+          # Install dependencies through JFrog (cached)
+          - script: |
+              jfrog rt npm-install
+            displayName: 'npm install (via JFrog proxy)'
+
+          # Run tests
+          - script: |
+              npm test
+            displayName: 'Run unit tests'
+            continueOnError: false
+
+          # Build Docker image
+          # Base image pulled through JFrog Docker remote (avoids Docker Hub rate limits)
+          - task: Docker@2
+            displayName: 'Build Docker image'
+            inputs:
+              command: build
+              repository: '$(imageRepository)'
+              dockerfile: '01-harbor-basics/Dockerfile'
+              buildContext: '01-harbor-basics'
+              arguments: '--build-arg BASE_REGISTRY=$(JFROG_URL)/docker-remote'
+              tags: |
+                $(tag)
+                latest
+
+          # Vulnerability scan
+          - script: |
+              docker run --rm \
+                -v /var/run/docker.sock:/var/run/docker.sock \
+                aquasec/trivy:latest image \
+                --severity CRITICAL,HIGH \
+                --exit-code 1 \
+                --ignore-unfixed \
+                $(HARBOR_URL)/$(imageRepository):$(tag)
+            displayName: 'Trivy vulnerability scan'
+
+          # Push Docker image to Harbor
+          - task: Docker@2
+            displayName: 'Login to Harbor'
+            inputs:
+              command: login
+              containerRegistry: 'harbor-service-connection'
+
+          - task: Docker@2
+            displayName: 'Push to Harbor'
+            inputs:
+              command: push
+              repository: '$(imageRepository)'
+              tags: |
+                $(tag)
+                latest
+
+          # Package and push Helm chart to JFrog
+          - script: |
+              helm package $(helmChartPath) --version 1.0.$(tag) --app-version $(tag)
+              jfrog rt helm-push sample-web-1.0.$(tag).tgz helm-local
+            displayName: 'Push Helm chart to JFrog'
+
+          - script: |
+              echo "##vso[task.setvariable variable=imageTag;isOutput=true]$(tag)"
+            name: setImageTag
+
+  # ───────────────────────────────────────────
+  # Stage 2: Deploy to Dev (auto)
+  # ───────────────────────────────────────────
+  - stage: DeployDev
+    displayName: 'Deploy to Dev'
+    dependsOn: Build
+    variables:
+      imageTag: $[ stageDependencies.Build.BuildPushScan.outputs['setImageTag.imageTag'] ]
+    jobs:
+      - job: UpdateDev
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: self
+            persistCredentials: true
+          - script: |
+              sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+              sudo chmod +x /usr/local/bin/yq
+              yq e '.image.tag = "$(imageTag)"' -i $(helmChartPath)/values/dev.yaml
+            displayName: 'Update dev image tag'
+          - script: |
+              git config user.email "azure-pipelines@dev.azure.com"
+              git config user.name "Azure Pipelines"
+              git add -A
+              git diff --staged --quiet || git commit -m "ci(dev): image tag $(imageTag) [skip ci]"
+              git push origin HEAD:main
+            displayName: 'Commit & push'
+
+  # ───────────────────────────────────────────
+  # Stage 3: Deploy to UAT (approval required)
+  # ───────────────────────────────────────────
+  - stage: DeployUAT
+    displayName: 'Deploy to UAT'
+    dependsOn: DeployDev
+    variables:
+      imageTag: $[ stageDependencies.Build.BuildPushScan.outputs['setImageTag.imageTag'] ]
+    jobs:
+      - deployment: UAT
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'UAT'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  persistCredentials: true
+                - script: |
+                    sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+                    sudo chmod +x /usr/local/bin/yq
+                    yq e '.image.tag = "$(imageTag)"' -i $(helmChartPath)/values/uat.yaml
+                  displayName: 'Update UAT image tag'
+                - script: |
+                    git config user.email "azure-pipelines@dev.azure.com"
+                    git config user.name "Azure Pipelines"
+                    git add -A
+                    git diff --staged --quiet || git commit -m "ci(uat): image tag $(imageTag) [skip ci]"
+                    git push origin HEAD:main
+                  displayName: 'Commit & push'
+                - script: |
+                    echo "Trigger: argocd app sync myapp-uat"
+                  displayName: 'Manual sync reminder'
+
+  # ───────────────────────────────────────────
+  # Stage 4: Deploy to Prod (approval required)
+  # ───────────────────────────────────────────
+  - stage: DeployProd
+    displayName: 'Deploy to Production'
+    dependsOn: DeployUAT
+    variables:
+      imageTag: $[ stageDependencies.Build.BuildPushScan.outputs['setImageTag.imageTag'] ]
+    jobs:
+      - deployment: Production
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'Production'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  persistCredentials: true
+                - script: |
+                    sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+                    sudo chmod +x /usr/local/bin/yq
+                    yq e '.image.tag = "$(imageTag)"' -i $(helmChartPath)/values/prod.yaml
+                  displayName: 'Update prod image tag'
+                - script: |
+                    git config user.email "azure-pipelines@dev.azure.com"
+                    git config user.name "Azure Pipelines"
+                    git add -A
+                    git diff --staged --quiet || git commit -m "ci(prod): image tag $(imageTag) [skip ci]"
+                    git push origin HEAD:main
+                  displayName: 'Commit & push'
+                - script: |
+                    echo "Trigger during change window: argocd app sync myapp-prod"
+                  displayName: 'Manual sync reminder'

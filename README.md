@@ -38,7 +38,8 @@ A comprehensive collection of examples demonstrating how **Harbor** (container r
 | [05 - Vault + Argo CD](./05-vault-argocd-integration/) | Inject Vault secrets into Argo CD deployments | Argo Vault Plugin (AVP), secret templating, ConfigManagementPlugin |
 | [06 - Harbor + Vault](./06-harbor-vault-integration/) | Manage Harbor credentials via Vault | External Secrets Operator, Vault Agent injector, dynamic registry credentials |
 | [07 - Full Integration](./07-full-integration/) | End-to-end CI/CD pipeline | GitHub Actions CI, Harbor image storage, Vault secret injection, Argo CD deployment |
-| [08 - Real-World Setup](./08-real-world-setup/) | Production-grade multi-env setup | Azure Pipelines, approval gates, manual sync, Kustomize overlays, Prometheus + Grafana |
+| [08 - Real-World Setup](./08-real-world-setup/) | Production-grade multi-env setup | Azure Pipelines, approval gates, manual sync, Helm templates, Prometheus + Grafana |
+| [09 - Complete Lab](./09-complete-lab/) | Full DevSecOps toolchain lab | Azure Pipelines + Harbor + JFrog + Vault + Argo CD + Grafana/Prometheus |
 
 ## Prerequisites
 
@@ -114,9 +115,17 @@ Argo CD is a GitOps continuous delivery tool. It watches a Git repository for Ku
 │   └── argocd-application.yaml
 ├── 08-real-world-setup/               # Production-grade multi-env setup
 │   ├── azure-pipelines/               # Azure Pipelines with approval gates
-│   ├── argocd-multi-env/              # Kustomize overlays (dev/uat/prod)
+│   ├── helm-chart/                    # Helm chart with per-env values
+│   ├── argocd-multi-env/              # Per-env Argo CD Applications
 │   ├── vault-multi-env/               # Per-env Vault policies and roles
 │   └── monitoring/                    # Prometheus + Grafana dashboards
+├── 09-complete-lab/                   # Full DevSecOps lab
+│   ├── jfrog/                         # JFrog Artifactory setup + repos
+│   ├── harbor-jfrog-integration/      # How Harbor + JFrog work together
+│   ├── azure-pipelines/               # Pipeline using both JFrog + Harbor
+│   ├── vault-config/                  # All credentials in Vault
+│   ├── monitoring/                    # Full monitoring stack
+│   └── lab-exercises/                 # 8 hands-on exercises
 └── cheatsheets/                       # Quick reference guides
     ├── harbor-cheatsheet.md
     ├── vault-cheatsheet.md
