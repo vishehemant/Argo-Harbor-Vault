@@ -40,7 +40,7 @@ kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
   - role: control-plane
-    kubePortMapping:
+    extraPortMappings:
       - containerPort: 30002
         hostPort: 30002    # Harbor HTTP
       - containerPort: 30003
