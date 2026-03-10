@@ -1,40 +1,114 @@
-# Hands-On Practice Guide
+# Hands-On Practice Guide (Step by Step)
 
-This guide walks you through practicing each scenario on your local machine using **kind** (Kubernetes in Docker). By the end, you'll have all three tools running locally and fully integrated.
+Complete lab covering **Harbor, JFrog Artifactory, Vault, Argo CD, and Prometheus + Grafana** on a local kind cluster. Every command is copy-pasteable.
 
 ## Time Estimates
 
-| Phase | Duration |
-|-------|----------|
-| Environment setup | ~15 min |
-| Phase 1: Harbor | ~20 min |
-| Phase 2: Vault | ~20 min |
-| Phase 3: Argo CD | ~15 min |
-| Phase 4: Harbor + Argo CD | ~15 min |
-| Phase 5: Vault + Argo CD | ~20 min |
-| Phase 6: Harbor + Vault | ~15 min |
-| Phase 7: Full integration | ~20 min |
-| **Total** | **~2.5 hours** |
+| Phase | What You'll Do | Time |
+|-------|---------------|------|
+| Setup | Install tools, create kind cluster | 15 min |
+| Phase 1 | Install Prometheus + Grafana (monitoring) | 10 min |
+| Phase 2 | Install Harbor (container registry) | 15 min |
+| Phase 3 | Install JFrog Artifactory (package repos) | 15 min |
+| Phase 4 | Install Vault (secrets manager) | 15 min |
+| Phase 5 | Install Argo CD (GitOps) | 15 min |
+| Phase 6 | Integration: Harbor + Argo CD | 15 min |
+| Phase 7 | Integration: Vault + Argo CD (AVP) | 20 min |
+| Phase 8 | Integration: Vault + Harbor (ESO) | 15 min |
+| Phase 9 | Full pipeline simulation | 15 min |
+| **Total** | | **~2.5 hours** |
 
 ---
 
-## Environment Setup
+## Setup: Prerequisites
 
-### Option A: kind (Recommended for Local Practice)
-
-[kind](https://kind.sigs.k8s.io/) runs a Kubernetes cluster inside Docker containers. It's fast, lightweight, and perfect for learning.
+### Step 1: Install Docker
 
 ```bash
-# ── Install kind ──
+# Check if Docker is installed and running
+docker ps
+
+# If not installed (Ubuntu/Debian):
+sudo apt-get update
+sudo apt-get install -y docker.io
+sudo systemctl start docker
+sudo usermod -aG docker $USER
+# Log out and back in for group changes to take effect
+```
+
+### Step 2: Install kind
+
+```bash
+# Linux
+curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.22.0/kind-linux-amd64
+chmod +x ./kind
+sudo mv ./kind /usr/local/bin/kind
+
 # macOS
 brew install kind
 
-# Linux
-curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.22.0/kind-linux-amd64
-chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind
+# Verify
+kind version
+```
 
-# ── Create a cluster with extra port mappings ──
-# Harbor, Vault UI, and Argo CD all need exposed ports
+### Step 3: Install kubectl
+
+```bash
+# Linux
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/
+
+# macOS
+brew install kubectl
+
+# Verify
+kubectl version --client
+```
+
+### Step 4: Install Helm
+
+```bash
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+# Verify
+helm version
+```
+
+### Step 5: Install Argo CD CLI
+
+```bash
+# Linux
+curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+chmod +x /usr/local/bin/argocd
+
+# macOS
+brew install argocd
+
+# Verify
+argocd version --client
+```
+
+### Step 6: Install jq and yq
+
+```bash
+# jq (JSON processor)
+sudo apt-get install -y jq    # Linux
+# brew install jq              # macOS
+
+# yq (YAML processor)
+sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+sudo chmod +x /usr/local/bin/yq
+# brew install yq              # macOS
+
+# Verify
+jq --version
+yq --version
+```
+
+### Step 7: Create the kind Cluster
+
+```bash
 cat <<EOF | kind create cluster --name practice --config=-
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
@@ -42,67 +116,104 @@ nodes:
   - role: control-plane
     extraPortMappings:
       - containerPort: 30002
-        hostPort: 30002    # Harbor HTTP
+        hostPort: 30002
       - containerPort: 30003
-        hostPort: 30003    # Harbor HTTPS
+        hostPort: 30003
       - containerPort: 30080
-        hostPort: 30080    # Argo CD HTTP
+        hostPort: 30080
       - containerPort: 30443
-        hostPort: 30443    # Argo CD HTTPS
+        hostPort: 30443
+      - containerPort: 30030
+        hostPort: 30030
+      - containerPort: 30082
+        hostPort: 30082
     extraMounts:
       - hostPath: /tmp/harbor-data
         containerPath: /harbor-data
 EOF
+```
 
-# Verify the cluster is running
+### Step 8: Verify the Cluster
+
+```bash
 kubectl cluster-info
 kubectl get nodes
+# Should show one node in Ready status
 ```
 
-### Option B: Minikube
-
-```bash
-minikube start --cpus=4 --memory=8192 --driver=docker
-```
-
-### Option C: Cloud Cluster (easiest but costs money)
-
-Use a managed Kubernetes service (GKE, EKS, AKS) if you want to skip local setup. A small 2-node cluster is sufficient.
-
-### Install Required CLI Tools
-
-```bash
-# Helm
-curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-
-# Argo CD CLI
-curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
-chmod +x argocd && sudo mv argocd /usr/local/bin/
-
-# jq (used in scripts)
-sudo apt-get install -y jq   # Linux
-# brew install jq             # macOS
-```
-
-### Clone the Repo
+### Step 9: Clone the Repo
 
 ```bash
 git clone https://github.com/vishehemant/Argo-Harbor-Vault.git
 cd Argo-Harbor-Vault
+git checkout cursor/harbor-argo-vault-integration-aad0
 ```
 
----
-
-## Phase 1: Practice Harbor (Scenario 01)
-
-**Goal:** Install Harbor, create a project, build an image, push it, and scan it.
-
-### Step 1.1 — Install Harbor
+### Step 10: Add All Helm Repos
 
 ```bash
 helm repo add harbor https://helm.goharbor.io
+helm repo add hashicorp https://helm.releases.hashicorp.com
+helm repo add argo https://argoproj.github.io/argo-helm
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo add external-secrets https://charts.external-secrets.io
+helm repo add jfrog https://charts.jfrog.io
 helm repo update
+```
 
+**Checkpoint:** All tools installed, cluster running, repo cloned. You're ready to go.
+
+---
+
+## Phase 1: Install Prometheus + Grafana
+
+**Why first?** So we can monitor everything we install after this.
+
+### Step 1.1: Install kube-prometheus-stack
+
+```bash
+helm install kube-prometheus prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --create-namespace \
+  --set grafana.adminPassword="admin123" \
+  --set grafana.service.type=NodePort \
+  --set grafana.service.nodePort=30030 \
+  --wait --timeout 5m
+```
+
+### Step 1.2: Wait for All Pods
+
+```bash
+kubectl get pods -n monitoring
+# Wait until all pods show Running. This takes 2-3 minutes.
+```
+
+### Step 1.3: Access Grafana
+
+```bash
+kubectl port-forward svc/kube-prometheus-grafana -n monitoring 3000:80 &
+```
+
+Open http://localhost:3000 in your browser.
+- **Username:** `admin`
+- **Password:** `admin123`
+
+### Step 1.4: Explore Built-in Dashboards
+
+1. Click the hamburger menu (top-left) > **Dashboards**
+2. Open **Kubernetes / Compute Resources / Namespace (Pods)**
+3. Select namespace `monitoring` from the dropdown
+4. You should see CPU and memory usage of the monitoring pods
+
+**Checkpoint:** Grafana is running and showing Kubernetes metrics.
+
+---
+
+## Phase 2: Install Harbor
+
+### Step 2.1: Install Harbor via Helm
+
+```bash
 kubectl create namespace harbor
 
 helm install harbor harbor/harbor \
@@ -111,80 +222,164 @@ helm install harbor harbor/harbor \
   --wait --timeout 10m
 ```
 
-Wait for all pods to become ready:
+### Step 2.2: Wait for All Pods
 
 ```bash
 kubectl get pods -n harbor -w
-# Wait until all pods show STATUS: Running and READY: 1/1 (or 2/2)
-# Press Ctrl+C when done
+# Wait until ALL pods show Running and Ready
+# Press Ctrl+C when done. This takes 3-5 minutes.
 ```
 
-### Step 1.2 — Access the Harbor UI
+### Step 2.3: Find the Admin Password
 
 ```bash
-# Port-forward for local access
-kubectl port-forward svc/harbor-portal -n harbor 8080:80 &
-
-# Open http://localhost:8080 in your browser
-# Login: admin / Harbor12345
+kubectl get secret -n harbor harbor-core -o jsonpath='{.data.HARBOR_ADMIN_PASSWORD}' | base64 -d && echo
 ```
 
-**Things to explore in the UI:**
-- Click "Projects" -- see the default `library` project
-- Click "Administration" > "Users" -- see user management
-- Click "Administration" > "Registries" -- where you'd add replication endpoints
+Save this password — you'll need it for login.
 
-### Step 1.3 — Create a Project via API
+### Step 2.4: Access Harbor UI
 
 ```bash
-export HARBOR_URL="http://localhost:8080"
+# Kill any existing port-forwards on 8080
+pkill -f "port-forward.*8080" 2>/dev/null
 
-# Create a project called "my-app"
-curl -u "admin:Harbor12345" \
-  -X POST "${HARBOR_URL}/api/v2.0/projects" \
+# Port-forward the nginx gateway service
+kubectl port-forward svc/harbor-nginx -n harbor 8080:8443 &
+```
+
+Open https://localhost:8080 in your browser (accept the certificate warning).
+- **Username:** `admin`
+- **Password:** (from Step 2.3)
+
+### Step 2.5: Create a Project
+
+```bash
+# Get the password into a variable
+HARBOR_PASS=$(kubectl get secret -n harbor harbor-core -o jsonpath='{.data.HARBOR_ADMIN_PASSWORD}' | base64 -d)
+
+# Create project "my-app" via API
+curl -k -u "admin:${HARBOR_PASS}" \
+  -X POST "https://localhost:8080/api/v2.0/projects" \
   -H "Content-Type: application/json" \
   -d '{"project_name":"my-app","public":false,"metadata":{"auto_scan":"true"}}'
 
 # Verify — should see "my-app" in the list
-curl -u "admin:Harbor12345" "${HARBOR_URL}/api/v2.0/projects" | jq '.[].name'
+curl -k -u "admin:${HARBOR_PASS}" \
+  "https://localhost:8080/api/v2.0/projects" | jq '.[].name'
 ```
 
-**Check in the UI:** Refresh the Projects page -- you should see "my-app".
+### Step 2.6: Check in the UI
 
-### Step 1.4 — Build and Push an Image
+Refresh the Harbor UI. Click **Projects** — you should see `my-app` alongside the default `library` project.
 
-```bash
-# For kind clusters, we need to load the image differently
-# First, build it locally
-docker build -t localhost:8080/my-app/sample-web:v1.0.0 -f 01-harbor-basics/Dockerfile 01-harbor-basics/
+**Checkpoint:** Harbor is running, you can access the UI, and created a project via API.
 
-# If using port-forward, configure Docker to trust the registry
-# (kind approach -- load image directly into the cluster)
-kind load docker-image localhost:8080/my-app/sample-web:v1.0.0 --name practice
-```
-
-> **Note:** In a real environment with proper DNS, you'd `docker login harbor.example.com` and `docker push` directly. For local kind clusters, we use `kind load` to bypass registry authentication during practice.
-
-### Step 1.5 — Verify Understanding
-
-Before moving on, make sure you can answer:
-- [ ] What is a Harbor "project" and why would you create one?
-- [ ] What's the difference between a robot account and a regular user?
-- [ ] Why would you enable auto-scan on a project?
-- [ ] What does an image pull secret do?
+### What You Learned
+- [ ] Harbor runs multiple components (nginx, core, portal, registry, database, redis, trivy)
+- [ ] Projects are namespaces for repositories
+- [ ] auto_scan means every pushed image gets scanned by Trivy automatically
 
 ---
 
-## Phase 2: Practice Vault (Scenario 02)
+## Phase 3: Install JFrog Artifactory
 
-**Goal:** Install Vault, initialize it, store secrets, set up Kubernetes auth.
-
-### Step 2.1 — Install Vault
+### Step 3.1: Install JFrog via Helm
 
 ```bash
-helm repo add hashicorp https://helm.releases.hashicorp.com
-helm repo update
+kubectl create namespace jfrog
 
+helm install artifactory jfrog/artifactory \
+  --namespace jfrog \
+  --set artifactory.admin.password="password" \
+  --set nginx.service.type=NodePort \
+  --set nginx.service.nodePort=30082 \
+  --wait --timeout 10m
+```
+
+### Step 3.2: Wait for All Pods
+
+```bash
+kubectl get pods -n jfrog -w
+# Wait until all pods are Running. JFrog takes 3-5 minutes to start.
+# Press Ctrl+C when done.
+```
+
+### Step 3.3: Access JFrog UI
+
+```bash
+kubectl port-forward svc/artifactory -n jfrog 8082:8082 &
+```
+
+Open http://localhost:8082 in your browser.
+- **Username:** `admin`
+- **Password:** `password`
+
+On first login, JFrog may ask you to set a new password and configure a base URL. You can skip/use defaults for practice.
+
+### Step 3.4: Create Repositories (Private + Public Proxy)
+
+```bash
+JFROG_URL="http://localhost:8082"
+
+# Create a LOCAL npm repo (your private packages)
+curl -u "admin:password" -X PUT "${JFROG_URL}/artifactory/api/repositories/npm-local" \
+  -H "Content-Type: application/json" \
+  -d '{"key":"npm-local","rclass":"local","packageType":"npm"}'
+
+# Create a REMOTE npm repo (proxy cache for public npmjs.org)
+curl -u "admin:password" -X PUT "${JFROG_URL}/artifactory/api/repositories/npm-remote" \
+  -H "Content-Type: application/json" \
+  -d '{"key":"npm-remote","rclass":"remote","packageType":"npm","url":"https://registry.npmjs.org"}'
+
+# Create a VIRTUAL npm repo (combines local + remote into one endpoint)
+curl -u "admin:password" -X PUT "${JFROG_URL}/artifactory/api/repositories/npm-virtual" \
+  -H "Content-Type: application/json" \
+  -d '{"key":"npm-virtual","rclass":"virtual","packageType":"npm","repositories":["npm-local","npm-remote"],"defaultDeploymentRepo":"npm-local"}'
+
+echo "npm repos created!"
+
+# Create Docker proxy repo (caches Docker Hub images — avoids rate limits)
+curl -u "admin:password" -X PUT "${JFROG_URL}/artifactory/api/repositories/docker-remote" \
+  -H "Content-Type: application/json" \
+  -d '{"key":"docker-remote","rclass":"remote","packageType":"docker","url":"https://registry-1.docker.io/"}'
+
+echo "Docker proxy repo created!"
+```
+
+### Step 3.5: Verify in JFrog UI
+
+1. Click **Administration** > **Repositories**
+2. You should see: `npm-local`, `npm-remote`, `npm-virtual`, `docker-remote`
+
+### Step 3.6: Test npm Proxy
+
+```bash
+# Configure npm to use JFrog as its registry
+npm config set registry http://localhost:8082/artifactory/api/npm/npm-virtual/
+
+# Install a public package through JFrog (first time: fetched from npmjs.org and cached)
+npm install lodash --prefix /tmp/test-npm
+
+# Check JFrog UI: Artifacts > npm-remote
+# You should see lodash cached there
+```
+
+**Checkpoint:** JFrog is running with private and proxy repositories for npm and Docker.
+
+### What You Learned
+- [ ] **Local** repos store your private artifacts
+- [ ] **Remote** repos proxy and cache public registries (npm, Docker Hub, Maven Central)
+- [ ] **Virtual** repos combine local + remote into a single client endpoint
+- [ ] This avoids Docker Hub rate limits and gives you full control over dependencies
+
+---
+
+## Phase 4: Install Vault
+
+### Step 4.1: Install Vault via Helm
+
+```bash
 kubectl create namespace vault
 
 helm install vault hashicorp/vault \
@@ -193,158 +388,170 @@ helm install vault hashicorp/vault \
   --wait --timeout 5m
 ```
 
+### Step 4.2: Check Pod Status
+
 ```bash
-# The vault-0 pod will be Running but NOT Ready (0/1)
-# That's expected — Vault is sealed and needs initialization
 kubectl get pods -n vault
+# vault-0 will show Running but NOT Ready (0/1)
+# This is expected — Vault is sealed and needs initialization
 ```
 
-### Step 2.2 — Initialize and Unseal
+### Step 4.3: Initialize Vault
 
 ```bash
-# Initialize Vault
 kubectl exec -n vault vault-0 -- vault operator init \
   -key-shares=1 \
   -key-threshold=1 \
   -format=json > vault-keys.json
 
-# Using 1 key share for simplicity in practice (use 5 shares in production!)
+echo "Vault initialized. Keys saved to vault-keys.json"
+```
 
-# Unseal
+### Step 4.4: Unseal Vault
+
+```bash
 VAULT_UNSEAL_KEY=$(jq -r '.unseal_keys_b64[0]' vault-keys.json)
 kubectl exec -n vault vault-0 -- vault operator unseal "$VAULT_UNSEAL_KEY"
-
-# Verify — "Sealed: false"
-kubectl exec -n vault vault-0 -- vault status
 ```
 
-### Step 2.3 — Access the Vault UI
+### Step 4.5: Verify Unsealed
 
 ```bash
-kubectl port-forward svc/vault -n vault 8200:8200 &
+kubectl exec -n vault vault-0 -- vault status
+# Look for: Sealed = false
+```
 
-# Open http://localhost:8200 in your browser
-# Login with the root token:
+### Step 4.6: Login and Enable KV v2
+
+```bash
 ROOT_TOKEN=$(jq -r '.root_token' vault-keys.json)
 echo "Root token: $ROOT_TOKEN"
+
+kubectl exec -n vault vault-0 -- vault login "$ROOT_TOKEN"
+kubectl exec -n vault vault-0 -- vault secrets enable -path=secret kv-v2
 ```
 
-### Step 2.4 — Store Secrets
+### Step 4.7: Store Secrets
 
 ```bash
-# Login
-kubectl exec -n vault vault-0 -- vault login $(jq -r '.root_token' vault-keys.json)
-
-# Enable KV v2
-kubectl exec -n vault vault-0 -- vault secrets enable -path=secret kv-v2
-
-# Store application secrets
+# Application database credentials
 kubectl exec -n vault vault-0 -- vault kv put secret/myapp/config \
   db_host="postgres.default.svc" \
   db_port="5432" \
+  db_name="myapp_db" \
   db_user="myapp" \
   db_password="super-secret-password"
 
-# Read them back
+# API keys
+kubectl exec -n vault vault-0 -- vault kv put secret/myapp/api-keys \
+  stripe_key="sk_test_practice123" \
+  sendgrid_key="SG.practice456" \
+  redis_url="redis://localhost:6379/0"
+
+# Harbor registry credentials
+kubectl exec -n vault vault-0 -- vault kv put secret/harbor/creds \
+  url="harbor.example.com" \
+  username="robot-ci-pipeline" \
+  password="harbor-robot-secret" \
+  email="ci@example.com"
+
+# JFrog registry credentials
+kubectl exec -n vault vault-0 -- vault kv put secret/jfrog/creds \
+  url="jfrog.example.com" \
+  username="ci-user" \
+  password="jfrog-api-token"
+```
+
+### Step 4.8: Read Secrets Back
+
+```bash
+# Read all keys
 kubectl exec -n vault vault-0 -- vault kv get secret/myapp/config
 
-# Try reading just one field
+# Read a single field
 kubectl exec -n vault vault-0 -- vault kv get -field=db_password secret/myapp/config
+# Should output: super-secret-password
 ```
 
-**Check in the UI:** Navigate to Secrets Engines > secret > myapp > config.
-
-### Step 2.5 — Create a Policy and Test Access Control
+### Step 4.9: Create Policies
 
 ```bash
-# Copy policy into the pod
-kubectl cp 02-vault-basics/policies/app-read-policy.hcl vault/vault-0:/tmp/policy.hcl
+# Copy the policy file into the Vault pod
+kubectl cp 02-vault-basics/policies/app-read-policy.hcl vault/vault-0:/tmp/app-read-policy.hcl
+kubectl cp 02-vault-basics/policies/argocd-policy.hcl vault/vault-0:/tmp/argocd-policy.hcl
 
-# Apply it
-kubectl exec -n vault vault-0 -- vault policy write app-read /tmp/policy.hcl
+# Apply policies
+kubectl exec -n vault vault-0 -- vault policy write app-read /tmp/app-read-policy.hcl
+kubectl exec -n vault vault-0 -- vault policy write argocd /tmp/argocd-policy.hcl
 
-# Create a token with ONLY this policy
-kubectl exec -n vault vault-0 -- vault token create -policy=app-read -format=json > app-token.json
-APP_TOKEN=$(jq -r '.auth.client_token' app-token.json)
-
-# Test: this token can READ secrets
-kubectl exec -n vault vault-0 -- vault kv get -field=db_password secret/myapp/config
-
-# Test: this token CANNOT WRITE secrets (should fail with "permission denied")
-kubectl exec -n vault vault-0 -- sh -c "VAULT_TOKEN=$APP_TOKEN vault kv put secret/myapp/config hacked=true" || echo "Permission denied (expected!)"
+# Verify
+kubectl exec -n vault vault-0 -- vault policy list
 ```
 
-### Step 2.6 — Set Up Kubernetes Auth
+### Step 4.10: Enable Kubernetes Auth
 
 ```bash
-# Enable Kubernetes auth
 kubectl exec -n vault vault-0 -- vault auth enable kubernetes
 
-# Configure it
 kubectl exec -n vault vault-0 -- vault write auth/kubernetes/config \
   kubernetes_host="https://kubernetes.default.svc.cluster.local:443"
 
-# Create a role
+# Role for app pods
 kubectl exec -n vault vault-0 -- vault write auth/kubernetes/role/myapp \
   bound_service_account_names=myapp-sa \
   bound_service_account_namespaces=default \
   policies=app-read \
   ttl=1h
 
-# Create the ServiceAccount in the default namespace
-kubectl create serviceaccount myapp-sa
+# Role for Argo CD (used by AVP in Phase 7)
+kubectl exec -n vault vault-0 -- vault write auth/kubernetes/role/argocd \
+  bound_service_account_names=argocd-repo-server \
+  bound_service_account_namespaces=argocd \
+  policies=argocd \
+  ttl=1h
 ```
 
-### Step 2.7 — Test Kubernetes Auth from a Pod
+### Step 4.11: Access the Vault UI
 
 ```bash
-# Launch a test pod
-kubectl run vault-test --image=vault:1.15.4 \
-  --overrides='{"spec":{"serviceAccountName":"myapp-sa"}}' \
-  --command -- sleep 3600
-
-kubectl wait --for=condition=Ready pod/vault-test --timeout=60s
-
-# From inside the pod, authenticate with Vault
-kubectl exec vault-test -- sh -c '
-  JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-  VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
-
-  # Login with Kubernetes auth
-  RESPONSE=$(wget -qO- --post-data "{\"jwt\":\"$JWT\",\"role\":\"myapp\"}" \
-    $VAULT_ADDR/v1/auth/kubernetes/login)
-
-  TOKEN=$(echo $RESPONSE | sed "s/.*client_token\":\"\([^\"]*\).*/\1/")
-  echo "Got Vault token: ${TOKEN:0:10}..."
-
-  # Read a secret
-  wget -qO- --header "X-Vault-Token: $TOKEN" \
-    $VAULT_ADDR/v1/secret/data/myapp/config
-'
-
-# Clean up
-kubectl delete pod vault-test
+kubectl port-forward svc/vault -n vault 8200:8200 &
+echo "Root token: $(jq -r '.root_token' vault-keys.json)"
 ```
 
-### Step 2.8 — Verify Understanding
+Open http://localhost:8200 in your browser. Login with the root token.
 
-- [ ] What does "unsealing" Vault mean? Why is it needed?
-- [ ] What's the difference between the root token and a policy-scoped token?
-- [ ] How does Kubernetes auth work? (Pod ServiceAccount -> Vault role -> Vault policy)
-- [ ] What is KV v2 and how does versioning work?
+Navigate to **Secrets Engines** > **secret/** > **myapp** > **config** to see your stored secrets.
+
+### Step 4.12: Test Access Control
+
+```bash
+# Create a token that can ONLY read (not write) secrets
+kubectl exec -n vault vault-0 -- vault token create -policy=app-read -format=json > /tmp/app-token.json
+APP_TOKEN=$(jq -r '.auth.client_token' /tmp/app-token.json)
+echo "Limited token: $APP_TOKEN"
+
+# This works — reading is allowed
+kubectl exec -n vault vault-0 -- sh -c "VAULT_TOKEN=$APP_TOKEN vault kv get -field=db_password secret/myapp/config"
+
+# This FAILS — writing is not allowed by the app-read policy
+kubectl exec -n vault vault-0 -- sh -c "VAULT_TOKEN=$APP_TOKEN vault kv put secret/myapp/config hacked=true" 2>&1 || echo "EXPECTED: Permission denied!"
+```
+
+**Checkpoint:** Vault is running, unsealed, storing secrets, and has Kubernetes auth configured.
+
+### What You Learned
+- [ ] Vault must be unsealed before it can serve requests
+- [ ] KV v2 engine stores versioned key-value pairs
+- [ ] Policies control what a token can access (least privilege)
+- [ ] Kubernetes auth lets Pods authenticate with Vault using their ServiceAccount
 
 ---
 
-## Phase 3: Practice Argo CD (Scenario 03)
+## Phase 5: Install Argo CD
 
-**Goal:** Install Argo CD, deploy a sample app, understand sync behavior.
-
-### Step 3.1 — Install Argo CD
+### Step 5.1: Install Argo CD via Helm
 
 ```bash
-helm repo add argo https://argoproj.github.io/argo-helm
-helm repo update
-
 kubectl create namespace argocd
 
 helm install argocd argo/argo-cd \
@@ -353,422 +560,425 @@ helm install argocd argo/argo-cd \
   --wait --timeout 5m
 ```
 
-### Step 3.2 — Access the UI
+### Step 5.2: Get the Admin Password
 
 ```bash
-# Get the admin password
-ARGOCD_PASS=$(kubectl -n argocd get secret argocd-initial-admin-secret \
-  -o jsonpath="{.data.password}" | base64 -d)
+ARGOCD_PASS=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
 echo "Argo CD password: $ARGOCD_PASS"
-
-# Port-forward
-kubectl port-forward svc/argocd-server -n argocd 8443:443 &
-
-# Open https://localhost:8443 (accept the self-signed cert warning)
-# Login: admin / <password from above>
 ```
 
-### Step 3.3 — Deploy a Sample Application
+**Save this password** — you'll use it repeatedly.
+
+### Step 5.3: Access the UI
 
 ```bash
-# Apply the Application CRD
-kubectl apply -f 03-argocd-basics/argocd-application.yaml
+kubectl port-forward svc/argocd-server -n argocd 8443:443 &
+```
 
-# Watch it in the CLI
+Open https://localhost:8443 (accept the certificate warning).
+- **Username:** `admin`
+- **Password:** (from Step 5.2)
+
+### Step 5.4: Login via CLI
+
+```bash
 argocd login localhost:8443 --username admin --password "$ARGOCD_PASS" --insecure
+```
+
+### Step 5.5: Deploy a Sample Application
+
+```bash
+kubectl apply -f 03-argocd-basics/argocd-application.yaml
+```
+
+### Step 5.6: Watch the Deployment
+
+```bash
+# Check status in CLI
 argocd app get sample-app
 
-# Watch the pods come up
+# Watch pods come up
 kubectl get pods -n sample-app -w
+# Press Ctrl+C when you see 2 pods Running
 ```
 
-**Check the UI:** You should see the "sample-app" Application card. Click it to see the resource tree (Deployment -> ReplicaSet -> Pods).
+### Step 5.7: Check the Argo CD UI
 
-### Step 3.4 — Experiment with Sync Behavior
+1. Go to https://localhost:8443
+2. You should see the **sample-app** card
+3. Click it — see the resource tree: **Application → Deployment → ReplicaSet → 2 Pods**
+4. Green = healthy
+
+### Step 5.8: Experiment — Self-Heal
 
 ```bash
-# Experiment 1: Manual change → self-heal
-# Scale the deployment directly (bypass Git)
+# Manually scale to 5 replicas (bypassing Git)
 kubectl scale deployment sample-web -n sample-app --replicas=5
 
-# Watch Argo CD revert it back to 2 replicas (self-heal)
+# Watch Argo CD revert it back to 2 (self-heal kicks in within ~30 seconds)
 kubectl get pods -n sample-app -w
-# Within ~30 seconds, it should scale back to 2
-
-# Experiment 2: Delete a resource → Argo CD recreates it
-kubectl delete svc sample-web -n sample-app
-
-# Argo CD will recreate it
-kubectl get svc -n sample-app -w
+# You'll see extra pods Terminating as Argo CD reverts the change
 ```
 
-### Step 3.5 — Verify Understanding
+### Step 5.9: Experiment — Drift Detection
 
-- [ ] What is an Argo CD "Application" CRD?
-- [ ] What does "OutOfSync" mean? When does it happen?
-- [ ] What's the difference between auto-sync, prune, and self-heal?
-- [ ] What happens if you delete a YAML file from Git with `prune: true`?
+```bash
+# Delete the service
+kubectl delete svc sample-web -n sample-app
+
+# Argo CD recreates it automatically
+kubectl get svc -n sample-app -w
+# The service reappears within seconds
+```
+
+**Checkpoint:** Argo CD is deployed, managing a sample app, with auto-sync and self-heal working.
+
+### What You Learned
+- [ ] Argo CD watches Git and syncs manifests to the cluster
+- [ ] Self-heal reverts manual changes (someone runs kubectl directly)
+- [ ] Auto-sync deploys when Git changes
+- [ ] The UI shows the full resource tree and health status
 
 ---
 
-## Phase 4: Practice Harbor + Argo CD (Scenario 04)
+## Phase 6: Harbor + Argo CD Integration
 
-**Goal:** Deploy an application that pulls its image from a private Harbor registry via Argo CD.
+**Goal:** Deploy an app that pulls its image from a private Harbor registry.
 
-### Step 4.1 — Create the Image Pull Secret
+### Step 6.1: Create the Namespace and Pull Secret
 
 ```bash
-kubectl create namespace my-app
+kubectl create namespace my-app 2>/dev/null || true
 
-# Create the secret (use your actual Harbor credentials if available,
-# otherwise this demonstrates the concept)
 kubectl create secret docker-registry harbor-pull-secret \
   --docker-server=harbor.example.com \
-  --docker-username='robot$ci-pipeline' \
+  --docker-username='robot-ci-pipeline' \
   --docker-password='placeholder-for-practice' \
   --namespace=my-app
 ```
 
-### Step 4.2 — Deploy via Argo CD
+### Step 6.2: Deploy via Argo CD
 
 ```bash
-# Apply the Application
 kubectl apply -f 04-harbor-argocd-integration/argocd-application.yaml
-
-# Check status (it may be "Degraded" because the Harbor image isn't reachable
-# in a local setup — that's OK, the point is to understand the configuration)
 argocd app get harbor-sample-app
 ```
 
-### Step 4.3 — Study the Manifests
+The Deployment will show `ImagePullBackOff` because `harbor.example.com` isn't reachable locally — **this is expected**. The point is to understand the configuration.
 
-Open these files and understand each line:
-1. `04-harbor-argocd-integration/sample-app/deployment.yaml` -- note `imagePullSecrets` and the Harbor image URL
-2. `04-harbor-argocd-integration/registry-credentials/image-pull-secret.yaml` -- note the `dockerconfigjson` structure
-3. `04-harbor-argocd-integration/argocd-application-with-image-updater.yaml` -- note the Image Updater annotations
+### Step 6.3: Study the Key Files
 
-### Step 4.4 — Verify Understanding
+```bash
+# See how imagePullSecrets connects to the Harbor credential
+cat 04-harbor-argocd-integration/sample-app/deployment.yaml
 
-- [ ] Why does the Deployment need `imagePullSecrets`?
-- [ ] What format is the docker-registry secret in? (`dockerconfigjson`)
-- [ ] How does the Argo CD Image Updater know which registry to watch?
-- [ ] What's the difference between the "argocd" and "git" write-back methods?
+# See the docker-registry secret structure
+cat 04-harbor-argocd-integration/sample-app/image-pull-secret.yaml
+
+# See Argo CD Image Updater annotations
+cat 04-harbor-argocd-integration/argocd-application-with-image-updater.yaml
+```
+
+**Checkpoint:** You understand how Argo CD deploys from a private Harbor registry.
+
+### What You Learned
+- [ ] `imagePullSecrets` tells kubelet which credentials to use when pulling
+- [ ] The secret type is `kubernetes.io/dockerconfigjson`
+- [ ] Argo CD Image Updater can auto-detect new tags in Harbor
 
 ---
 
-## Phase 5: Practice Vault + Argo CD (Scenario 05)
+## Phase 7: Vault + Argo CD Integration (AVP)
 
-**Goal:** Set up AVP to inject Vault secrets into Argo CD-managed manifests.
+**Goal:** Inject secrets from Vault into Argo CD-managed manifests.
 
-### Step 5.1 — Store Secrets in Vault
+### Step 7.1: Create the AVP Vault Policy
 
 ```bash
-# Store the secrets that our manifests reference
-kubectl exec -n vault vault-0 -- vault kv put secret/myapp/config \
-  db_host="postgres.default.svc" \
-  db_port="5432" \
-  db_name="myapp_db" \
-  db_user="myapp" \
-  db_password="vault-managed-password"
-
-kubectl exec -n vault vault-0 -- vault kv put secret/myapp/api-keys \
-  stripe_key="sk_test_practice123" \
-  sendgrid_key="SG.practice456" \
-  redis_url="redis://localhost:6379/0"
+kubectl cp 02-vault-basics/policies/argocd-policy.hcl vault/vault-0:/tmp/argocd-policy.hcl
+kubectl exec -n vault vault-0 -- vault policy write argocd /tmp/argocd-policy.hcl
 ```
 
-### Step 5.2 — Set Up AVP
+### Step 7.2: Install the AVP Plugin
 
 ```bash
-# Create the AVP role in Vault for Argo CD
-kubectl exec -n vault vault-0 -- vault policy write argocd - <<'EOF'
-path "secret/data/*" {
-  capabilities = ["read", "list"]
-}
-path "secret/metadata/*" {
-  capabilities = ["read", "list"]
-}
-EOF
-
-kubectl exec -n vault vault-0 -- vault write auth/kubernetes/role/argocd \
-  bound_service_account_names=argocd-repo-server \
-  bound_service_account_namespaces=argocd \
-  policies=argocd \
-  ttl=1h
-
-# Install the CMP plugin ConfigMap
+# Create the plugin ConfigMap
 kubectl apply -f 05-vault-argocd-integration/argocd-vault-plugin/cmp-plugin-configmap.yaml
 
-# Patch the repo-server to add AVP sidecar
+# Patch the repo-server to add the AVP sidecar
 kubectl patch deployment argocd-repo-server -n argocd \
   --patch-file 05-vault-argocd-integration/argocd-vault-plugin/argocd-repo-server-patch.yaml
+
+# Wait for the repo-server to restart
+kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=120s
 ```
 
-### Step 5.3 — Study the Secret Manifests
+### Step 7.3: Verify AVP Is Running
 
-Look at `05-vault-argocd-integration/sample-app/secret.yaml`:
+```bash
+kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-repo-server
+# Should show 1/1 Running (or 2/2 if sidecar is counted)
 
-```yaml
-# This is safe to commit to Git — no real secrets!
+# Check AVP sidecar logs
+kubectl logs -n argocd deploy/argocd-repo-server -c avp --tail=10
+```
+
+### Step 7.4: Ensure Secrets Are in Vault
+
+```bash
+kubectl exec -n vault vault-0 -- vault kv get secret/myapp/config
+kubectl exec -n vault vault-0 -- vault kv get secret/myapp/api-keys
+# You should see the values stored in Phase 4
+```
+
+### Step 7.5: Study the Secret Template
+
+```bash
+cat 05-vault-argocd-integration/sample-app/secret.yaml
+```
+
+Notice the placeholders:
+```
 DB_PASSWORD: <path:secret/data/myapp/config#db_password>
 ```
 
-At sync time, AVP replaces this with the real value from Vault.
+This is **safe in Git** — no real secrets. AVP replaces these at sync time.
 
-### Step 5.4 — Deploy and Verify
+### Step 7.6: Deploy via Argo CD
 
 ```bash
 kubectl apply -f 05-vault-argocd-integration/argocd-application.yaml
 argocd app get vault-argocd-demo
-
-# If AVP is working, the Secret in the cluster will have real values:
-kubectl get secret myapp-secrets -n vault-argocd-demo -o jsonpath='{.data.DB_PASSWORD}' | base64 -d
-# Should output: vault-managed-password
 ```
 
-### Step 5.5 — Verify Understanding
+### Step 7.7: Verify Secrets Were Resolved
 
-- [ ] Why is it safe to store `<path:secret/data/...#key>` placeholders in Git?
-- [ ] How does AVP authenticate with Vault? (Kubernetes auth via repo-server's ServiceAccount)
-- [ ] What's the difference between AVP-plain, AVP-Kustomize, and AVP-Helm plugins?
-- [ ] When are the placeholders resolved — at commit time or at sync time?
+```bash
+# If AVP is working, the K8s Secret has REAL values from Vault
+kubectl get secret myapp-secrets -n vault-argocd-demo -o jsonpath='{.data.DB_PASSWORD}' | base64 -d && echo
+# Expected output: super-secret-password
+
+kubectl get secret myapp-secrets -n vault-argocd-demo -o jsonpath='{.data.DB_HOST}' | base64 -d && echo
+# Expected output: postgres.default.svc
+```
+
+**Checkpoint:** AVP is resolving Vault secrets into Argo CD-managed Kubernetes Secrets.
+
+### What You Learned
+- [ ] Manifests in Git contain `<path:...#key>` placeholders, never real secrets
+- [ ] AVP runs as a sidecar on the repo-server
+- [ ] AVP authenticates with Vault using Kubernetes ServiceAccount auth
+- [ ] Placeholders are resolved at sync time, not at commit time
 
 ---
 
-## Phase 6: Practice Harbor + Vault (Scenario 06)
+## Phase 8: Harbor + Vault Integration (ESO)
 
 **Goal:** Use External Secrets Operator to dynamically create Harbor pull secrets from Vault.
 
-### Step 6.1 — Install External Secrets Operator
+### Step 8.1: Install External Secrets Operator
 
 ```bash
-helm repo add external-secrets https://charts.external-secrets.io
-helm repo update
-
 helm install external-secrets external-secrets/external-secrets \
   --namespace external-secrets \
   --create-namespace \
-  --wait
+  --wait --timeout 5m
 ```
 
-### Step 6.2 — Store Harbor Credentials in Vault
+### Step 8.2: Verify ESO Is Running
 
 ```bash
-kubectl exec -n vault vault-0 -- vault kv put secret/harbor/creds \
-  url="harbor.example.com" \
-  username='robot$ci-pipeline' \
-  password="harbor-robot-secret" \
-  email="ci@example.com"
+kubectl get pods -n external-secrets
+# All pods should be Running
 ```
 
-### Step 6.3 — Create the SecretStore and ExternalSecret
+### Step 8.3: Create the SecretStore
 
 ```bash
-# Create the namespace and ServiceAccount
+# Ensure namespace and ServiceAccount exist
 kubectl create namespace my-app 2>/dev/null || true
+
 kubectl apply -f 06-harbor-vault-integration/external-secrets/secret-store.yaml
+```
+
+### Step 8.4: Check SecretStore Status
+
+```bash
+kubectl get secretstore -n my-app
+# STATUS should show: Valid
+```
+
+### Step 8.5: Create the ExternalSecret for Harbor Creds
+
+```bash
 kubectl apply -f 06-harbor-vault-integration/external-secrets/external-secret-harbor-creds.yaml
 ```
 
-### Step 6.4 — Verify
+### Step 8.6: Verify the K8s Secret Was Created
 
 ```bash
 # Check ExternalSecret status
-kubectl get externalsecret -n my-app
-# Look for STATUS: SecretSynced
+kubectl get externalsecret harbor-pull-secret -n my-app
+# STATUS should show: SecretSynced
 
-# Check that the K8s Secret was created
+# Check the created K8s Secret
 kubectl get secret harbor-pull-secret -n my-app
 # TYPE should be: kubernetes.io/dockerconfigjson
 
-# Decode it to see the contents
+# Decode and view the contents
 kubectl get secret harbor-pull-secret -n my-app \
   -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq .
+# You should see the Harbor credentials from Vault
 ```
 
-### Step 6.5 — Practice Secret Rotation
+### Step 8.7: Test Secret Rotation
 
 ```bash
-# Simulate a credential rotation — update the password in Vault
+# Change the password in Vault
 kubectl exec -n vault vault-0 -- vault kv put secret/harbor/creds \
   url="harbor.example.com" \
-  username='robot$ci-pipeline' \
-  password="NEW-rotated-password-2024" \
+  username="robot-ci-pipeline" \
+  password="ROTATED-new-password-2026" \
   email="ci@example.com"
 
-# Wait for ESO to refresh (or trigger manually)
-# Default refresh interval is 1h, but you can annotate the ExternalSecret:
+# Force ESO to re-sync (instead of waiting 1 hour)
 kubectl annotate externalsecret harbor-pull-secret -n my-app \
   force-sync=$(date +%s) --overwrite
 
-# Check the updated secret
+# Wait a few seconds, then check the secret
+sleep 5
 kubectl get secret harbor-pull-secret -n my-app \
-  -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq .
-# password should now be "NEW-rotated-password-2024"
+  -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq .password
+# Should show: ROTATED-new-password-2026
 ```
 
-### Step 6.6 — Verify Understanding
+**Checkpoint:** ESO creates and rotates Kubernetes Secrets from Vault automatically.
 
-- [ ] What's the difference between a `SecretStore` and a `ClusterSecretStore`?
-- [ ] How does ESO handle secret rotation? (refresh interval)
-- [ ] When would you use ESO vs. Vault Agent Injector?
-- [ ] Why is ESO better for image pull secrets specifically?
+### What You Learned
+- [ ] ESO runs as a controller that syncs external secrets into K8s Secrets
+- [ ] SecretStore defines HOW to connect to Vault
+- [ ] ExternalSecret defines WHAT to sync and in what format
+- [ ] Secret rotation: update Vault → ESO syncs → K8s Secret is updated
 
 ---
 
-## Phase 7: Full Integration (Scenario 07)
+## Phase 9: Full Pipeline Simulation
 
-**Goal:** Tie everything together — CI builds an image, pushes to Harbor, Vault manages secrets, Argo CD deploys.
+**Goal:** Simulate the entire flow: build image → update Helm values → Argo CD syncs.
 
-### Step 7.1 — Review the Architecture
-
-Open `07-full-integration/README.md` and trace the flow:
-
-```
-Developer → Git push → GitHub Actions → Harbor (image)
-                                            ↓
-                         Vault (secrets) ← Argo CD → Kubernetes
-```
-
-### Step 7.2 — Deploy the Full Stack
+### Step 9.1: Store Per-Environment Secrets in Vault
 
 ```bash
-# Ensure secrets are in Vault
-kubectl exec -n vault vault-0 -- vault kv put secret/production/myapp/config \
-  db_host="postgres.production.svc" \
-  db_port="5432" \
-  db_name="myapp_production" \
-  db_user="prod_user" \
-  db_password="production-password"
+for ENV in dev uat prod; do
+  kubectl exec -n vault vault-0 -- vault kv put "secret/${ENV}/myapp/config" \
+    db_host="postgres.myapp-${ENV}.svc" \
+    db_port="5432" \
+    db_name="myapp_${ENV}" \
+    db_user="${ENV}_user" \
+    db_password="${ENV}-password-2026"
+done
 
-kubectl exec -n vault vault-0 -- vault kv put secret/production/myapp/api-keys \
-  stripe_key="sk_live_prod" \
-  sendgrid_key="SG.prod_key" \
-  jwt_secret="jwt-signing-key"
-
-# Create the Vault role for this namespace
-kubectl exec -n vault vault-0 -- vault write auth/kubernetes/role/eso-harbor \
-  bound_service_account_names=vault-auth-sa \
-  bound_service_account_namespaces=production \
-  policies=argocd \
-  ttl=1h
-
-# Deploy via Argo CD
-kubectl apply -f 07-full-integration/argocd-application.yaml
-
-argocd app get full-integration-app
-kubectl get all -n production
+# Verify
+kubectl exec -n vault vault-0 -- vault kv get secret/dev/myapp/config
+kubectl exec -n vault vault-0 -- vault kv get secret/prod/myapp/config
 ```
 
-### Step 7.3 — Study the CI Pipeline
-
-Open `07-full-integration/ci-pipeline/github-actions-workflow.yaml` and trace each step:
-
-1. **Build** -- `docker build` using the Dockerfile from `01-harbor-basics/`
-2. **Scan** -- Trivy checks for vulnerabilities before pushing
-3. **Push** -- `docker push` to Harbor
-4. **Update Manifests** -- `kustomize edit set image` changes the tag
-5. **Commit** -- Push the updated `kustomization.yaml` to Git
-6. **Argo CD Syncs** -- Detects the commit and deploys the new version
-
-### Step 7.4 — Simulate a Deployment
+### Step 9.2: Review the Helm Chart
 
 ```bash
-# Simulate what CI would do — update the image tag
-cd 07-full-integration/app-manifests
+# See the chart structure
+ls 08-real-world-setup/helm-chart/
+ls 08-real-world-setup/helm-chart/templates/
+ls 08-real-world-setup/helm-chart/values/
 
-# "CI" updates the tag to v1.1.0
-# (In real life, kustomize CLI does this)
-# kustomize edit set image harbor.example.com/my-app/sample-web=harbor.example.com/my-app/sample-web:v1.1.0
+# See how secret.yaml uses vaultPathPrefix from values
+cat 08-real-world-setup/helm-chart/templates/secret.yaml
 
-# Argo CD would detect this change and sync automatically
+# See per-environment differences
+diff 08-real-world-setup/helm-chart/values/dev.yaml 08-real-world-setup/helm-chart/values/prod.yaml
 ```
+
+### Step 9.3: Review the Argo CD Applications
+
+```bash
+cat 08-real-world-setup/argocd-multi-env/argocd-apps-helm.yaml
+```
+
+Notice:
+- `myapp-dev` has `automated` sync policy (auto-deploy)
+- `myapp-uat` has NO automated sync (manual trigger after approval)
+- `myapp-prod` has NO automated sync (manual trigger during change window)
+
+### Step 9.4: Simulate "CI Updates the Image Tag"
+
+```bash
+# This is what Azure Pipeline does:
+cd 08-real-world-setup/helm-chart
+yq e '.image.tag = "v2.0.0"' -i values/dev.yaml
+
+# See the change
+cat values/dev.yaml | head -10
+
+# Commit (simulating what CI does)
+cd ../..
+git add 08-real-world-setup/helm-chart/values/dev.yaml
+git commit -m "ci(dev): update image to v2.0.0"
+```
+
+### Step 9.5: Review the Azure Pipeline
+
+```bash
+cat 08-real-world-setup/azure-pipelines/azure-pipelines-helm.yaml
+```
+
+Trace the flow:
+1. **Build stage** → builds image, Trivy scan, pushes to Harbor
+2. **Dev stage** → `yq` updates `values/dev.yaml` → auto-deploy
+3. **UAT stage** → approval gate → `yq` updates `values/uat.yaml` → manual sync
+4. **Prod stage** → approval gate → `yq` updates `values/prod.yaml` → manual sync
+
+### Step 9.6: Review the Monitoring Stack
+
+```bash
+# See what gets monitored
+cat 09-complete-lab/monitoring/prometheus/service-monitors-all.yaml
+
+# See the alert rules
+cat 08-real-world-setup/monitoring/prometheus/alert-rules.yaml
+```
+
+Key alerts:
+- **ArgoCDSyncFailed** → sync broken for 5 min
+- **VaultSealed** → critical, pager alert
+- **HarborCriticalVulnerabilities** → images with critical CVEs
+- **PodCrashLooping** → app pods restarting
+
+**Checkpoint:** You understand the full end-to-end pipeline: Azure Pipelines → Harbor (images) + JFrog (dependencies) → Vault (secrets) → Argo CD (deploy) → Prometheus + Grafana (monitor).
 
 ---
 
 ## Cleanup
 
-When you're done practicing:
-
 ```bash
-# Delete the kind cluster (removes everything)
+# Delete the entire kind cluster (removes everything)
 kind delete cluster --name practice
 
-# Or remove individual components
-helm uninstall argocd -n argocd
-helm uninstall vault -n vault
-helm uninstall harbor -n harbor
-helm uninstall external-secrets -n external-secrets
-kubectl delete namespace argocd vault harbor my-app production sample-app
+# Reset npm registry (if you changed it in Phase 3)
+npm config delete registry
 ```
 
 ---
 
-## Practice Exercises
+## Troubleshooting Quick Reference
 
-After completing the guided walkthrough, try these on your own:
-
-### Exercise 1: Add a New Secret
-1. Store a new secret in Vault at `secret/myapp/redis`
-2. Create an ExternalSecret that syncs it to a K8s Secret
-3. Reference it in a Deployment as an environment variable
-
-### Exercise 2: Create a New Harbor Project
-1. Create a new Harbor project called "frontend"
-2. Create a robot account scoped to that project
-3. Store the robot credentials in Vault
-4. Create an ExternalSecret for the pull credentials
-
-### Exercise 3: Deploy a Helm Chart via Argo CD
-1. Find a Helm chart (e.g., bitnami/nginx)
-2. Create an Argo CD Application that installs it
-3. Override values using a values file from Git
-
-### Exercise 4: Implement Secret Rotation
-1. Store a database password in Vault
-2. Deploy an app that uses it (via AVP)
-3. Rotate the password in Vault
-4. Trigger an Argo CD sync and verify the pod picks up the new password
-
-### Exercise 5: Multi-Environment Setup
-1. Create Vault paths for `secret/staging/...` and `secret/production/...`
-2. Create separate Argo CD Applications for each environment
-3. Use Kustomize overlays to differentiate staging vs. production
-
----
-
-## Troubleshooting
-
-### Harbor pods not starting
-```bash
-kubectl describe pod -n harbor -l app=harbor
-kubectl logs -n harbor -l component=core
-```
-
-### Vault is sealed after restart
-```bash
-# Re-unseal (kind clusters lose state on restart)
-VAULT_UNSEAL_KEY=$(jq -r '.unseal_keys_b64[0]' vault-keys.json)
-kubectl exec -n vault vault-0 -- vault operator unseal "$VAULT_UNSEAL_KEY"
-```
-
-### Argo CD Application stuck "Progressing"
-```bash
-argocd app get <app-name> --show-operation
-kubectl describe application <app-name> -n argocd
-```
-
-### AVP not resolving placeholders
-```bash
-# Check the AVP sidecar logs
-kubectl logs -n argocd deploy/argocd-repo-server -c avp
-
-# Verify the Vault role exists
-kubectl exec -n vault vault-0 -- vault read auth/kubernetes/role/argocd
-```
-
-### ESO ExternalSecret not syncing
-```bash
-kubectl describe externalsecret <name> -n <namespace>
-kubectl logs -n external-secrets deploy/external-secrets
-```
+| Problem | Fix |
+|---------|-----|
+| `connection refused` on kubectl | `kind export kubeconfig --name practice` |
+| Vault is sealed after restart | `kubectl exec -n vault vault-0 -- vault operator unseal $(jq -r '.unseal_keys_b64[0]' vault-keys.json)` |
+| Harbor password not working | `kubectl get secret -n harbor harbor-core -o jsonpath='{.data.HARBOR_ADMIN_PASSWORD}' \| base64 -d` |
+| Argo CD app stuck `Unknown` | Check `targetRevision` matches your branch: `cursor/harbor-argo-vault-integration-aad0` |
+| AVP not resolving placeholders | `kubectl logs -n argocd deploy/argocd-repo-server -c avp --tail=20` |
+| ESO ExternalSecret not syncing | `kubectl describe externalsecret <name> -n <namespace>` |
+| Port-forward died | Re-run the `kubectl port-forward` command for that service |
+| `helm install` name already in use | Use `helm upgrade` instead, or `helm uninstall <name> -n <namespace>` first |
+| Pods stuck `Pending` | `kubectl describe pod <name> -n <namespace>` — likely insufficient resources |
