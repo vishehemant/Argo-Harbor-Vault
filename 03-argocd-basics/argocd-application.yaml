@@ -24,7 +24,8 @@ spec:
     # Git repository URL
     repoURL: https://github.com/vishehemant/Argo-Harbor-Vault.git
     # Branch, tag, or commit SHA to track
-    targetRevision: main
+    # Change this to "main" after merging, or use your branch name
+    targetRevision: cursor/harbor-argo-vault-integration-aad0
     # Path within the repo containing the manifests
     path: 03-argocd-basics/sample-app
 

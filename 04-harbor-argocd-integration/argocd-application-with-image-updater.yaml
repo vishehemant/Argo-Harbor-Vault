@@ -39,7 +39,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/vishehemant/Argo-Harbor-Vault.git
-    targetRevision: main
+    targetRevision: cursor/harbor-argo-vault-integration-aad0
     path: 04-harbor-argocd-integration/sample-app
   destination:
     server: https://kubernetes.default.svc

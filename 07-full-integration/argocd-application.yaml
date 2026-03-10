@@ -22,7 +22,7 @@ spec:
 
   source:
     repoURL: https://github.com/vishehemant/Argo-Harbor-Vault.git
-    targetRevision: main
+    targetRevision: cursor/harbor-argo-vault-integration-aad0
     path: 07-full-integration/app-manifests
 
     # Use the AVP-Kustomize plugin (renders Kustomize then processes AVP placeholders)
