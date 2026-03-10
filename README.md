@@ -38,6 +38,7 @@ A comprehensive collection of examples demonstrating how **Harbor** (container r
 | [05 - Vault + Argo CD](./05-vault-argocd-integration/) | Inject Vault secrets into Argo CD deployments | Argo Vault Plugin (AVP), secret templating, ConfigManagementPlugin |
 | [06 - Harbor + Vault](./06-harbor-vault-integration/) | Manage Harbor credentials via Vault | External Secrets Operator, Vault Agent injector, dynamic registry credentials |
 | [07 - Full Integration](./07-full-integration/) | End-to-end CI/CD pipeline | GitHub Actions CI, Harbor image storage, Vault secret injection, Argo CD deployment |
+| [08 - Real-World Setup](./08-real-world-setup/) | Production-grade multi-env setup | Azure Pipelines, approval gates, manual sync, Kustomize overlays, Prometheus + Grafana |
 
 ## Prerequisites
 
@@ -111,6 +112,11 @@ Argo CD is a GitOps continuous delivery tool. It watches a Git repository for Ku
 │   ├── vault-config/
 │   ├── ci-pipeline/
 │   └── argocd-application.yaml
+├── 08-real-world-setup/               # Production-grade multi-env setup
+│   ├── azure-pipelines/               # Azure Pipelines with approval gates
+│   ├── argocd-multi-env/              # Kustomize overlays (dev/uat/prod)
+│   ├── vault-multi-env/               # Per-env Vault policies and roles
+│   └── monitoring/                    # Prometheus + Grafana dashboards
 └── cheatsheets/                       # Quick reference guides
     ├── harbor-cheatsheet.md
     ├── vault-cheatsheet.md

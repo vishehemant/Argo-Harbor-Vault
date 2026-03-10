@@ -1,0 +1,217 @@
+# Azure Pipelines — Multi-Stage CI/CD
+#
+# Stages:
+#   1. Build   — build image, scan, push to Harbor
+#   2. Dev     — update dev overlay, auto-deployed by Argo CD
+#   3. UAT     — approval gate → update UAT overlay → manual Argo CD sync
+#   4. Prod    — approval gate → update prod overlay → manual Argo CD sync
+#
+# Prerequisites:
+#   - Azure DevOps Environments "UAT" and "Production" with approval checks configured
+#   - Service connection to Harbor registry
+#   - Variable group "harbor-credentials" with HARBOR_URL, HARBOR_USER, HARBOR_PASS
+#   - Git repo with Kustomize overlays at argocd-multi-env/overlays/{dev,uat,prod}
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - '01-harbor-basics/app/**'
+      - '01-harbor-basics/Dockerfile'
+
+variables:
+  - group: harbor-credentials
+  - name: imageRepository
+    value: 'my-app/sample-web'
+  - name: dockerfilePath
+    value: '01-harbor-basics/Dockerfile'
+  - name: buildContext
+    value: '01-harbor-basics'
+  - name: tag
+    value: '$(Build.BuildId)'
+
+# ─────────────────────────────────────────────────────────
+# Stage 1: Build, Scan, Push
+# ─────────────────────────────────────────────────────────
+stages:
+  - stage: Build
+    displayName: 'Build & Push Image'
+    jobs:
+      - job: BuildAndPush
+        displayName: 'Build, Scan, Push to Harbor'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Docker@2
+            displayName: 'Login to Harbor'
+            inputs:
+              command: login
+              containerRegistry: 'harbor-service-connection'
+
+          - task: Docker@2
+            displayName: 'Build image'
+            inputs:
+              command: build
+              repository: '$(imageRepository)'
+              dockerfile: '$(dockerfilePath)'
+              buildContext: '$(buildContext)'
+              tags: |
+                $(tag)
+                latest
+
+          - script: |
+              docker run --rm \
+                -v /var/run/docker.sock:/var/run/docker.sock \
+                aquasec/trivy:latest image \
+                --severity CRITICAL,HIGH \
+                --exit-code 1 \
+                --ignore-unfixed \
+                $(HARBOR_URL)/$(imageRepository):$(tag)
+            displayName: 'Trivy vulnerability scan'
+            continueOnError: false
+
+          - task: Docker@2
+            displayName: 'Push to Harbor'
+            inputs:
+              command: push
+              repository: '$(imageRepository)'
+              tags: |
+                $(tag)
+                latest
+
+          - script: |
+              echo "##vso[task.setvariable variable=imageTag;isOutput=true]$(tag)"
+              echo "Image pushed: $(HARBOR_URL)/$(imageRepository):$(tag)"
+            displayName: 'Set output variables'
+            name: setImageTag
+
+  # ─────────────────────────────────────────────────────────
+  # Stage 2: Deploy to Dev (automatic — no approval needed)
+  # ─────────────────────────────────────────────────────────
+  - stage: DeployDev
+    displayName: 'Deploy to Dev'
+    dependsOn: Build
+    variables:
+      imageTag: $[ stageDependencies.Build.BuildAndPush.outputs['setImageTag.imageTag'] ]
+    jobs:
+      - job: UpdateDevManifests
+        displayName: 'Update Dev Kustomize overlay'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: self
+            persistCredentials: true
+
+          - script: |
+              cd 08-real-world-setup/argocd-multi-env/overlays/dev
+              kustomize edit set image \
+                harbor.example.com/my-app/sample-web=$(HARBOR_URL)/$(imageRepository):$(imageTag)
+              cat kustomization.yaml
+            displayName: 'Update image tag in dev overlay'
+
+          - script: |
+              git config user.email "azure-pipelines@dev.azure.com"
+              git config user.name "Azure Pipelines"
+              git add -A
+              git diff --staged --quiet || git commit -m "ci(dev): update image to $(imageTag) [skip ci]"
+              git push origin HEAD:main
+            displayName: 'Commit and push dev overlay'
+
+          # Argo CD auto-syncs dev — no manual trigger needed
+
+  # ─────────────────────────────────────────────────────────
+  # Stage 3: Deploy to UAT (requires change manager approval)
+  # ─────────────────────────────────────────────────────────
+  - stage: DeployUAT
+    displayName: 'Deploy to UAT'
+    dependsOn: DeployDev
+    variables:
+      imageTag: $[ stageDependencies.Build.BuildAndPush.outputs['setImageTag.imageTag'] ]
+    jobs:
+      # This deployment job uses the "UAT" environment,
+      # which has approval checks configured in Azure DevOps
+      - deployment: DeployToUAT
+        displayName: 'Deploy to UAT (approval required)'
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'UAT'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  persistCredentials: true
+
+                - script: |
+                    cd 08-real-world-setup/argocd-multi-env/overlays/uat
+                    kustomize edit set image \
+                      harbor.example.com/my-app/sample-web=$(HARBOR_URL)/$(imageRepository):$(imageTag)
+                  displayName: 'Update image tag in UAT overlay'
+
+                - script: |
+                    git config user.email "azure-pipelines@dev.azure.com"
+                    git config user.name "Azure Pipelines"
+                    git add -A
+                    git diff --staged --quiet || git commit -m "ci(uat): update image to $(imageTag) [skip ci]"
+                    git push origin HEAD:main
+                  displayName: 'Commit and push UAT overlay'
+
+                - script: |
+                    echo "UAT overlay updated. Trigger Argo CD sync manually:"
+                    echo "  argocd app sync myapp-uat"
+                    echo ""
+                    echo "Or sync from the Argo CD UI."
+                  displayName: 'Reminder — manual Argo CD sync required'
+
+  # ─────────────────────────────────────────────────────────
+  # Stage 4: Deploy to Production (requires change manager approval)
+  # ─────────────────────────────────────────────────────────
+  - stage: DeployProd
+    displayName: 'Deploy to Production'
+    dependsOn: DeployUAT
+    variables:
+      imageTag: $[ stageDependencies.Build.BuildAndPush.outputs['setImageTag.imageTag'] ]
+    jobs:
+      - deployment: DeployToProduction
+        displayName: 'Deploy to Prod (approval required)'
+        pool:
+          vmImage: 'ubuntu-latest'
+        # "Production" environment with strict approval checks:
+        #   - Change manager must approve
+        #   - Business hours only (optional)
+        #   - Exclusive lock — only one deployment at a time
+        environment: 'Production'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  persistCredentials: true
+
+                - script: |
+                    cd 08-real-world-setup/argocd-multi-env/overlays/prod
+                    kustomize edit set image \
+                      harbor.example.com/my-app/sample-web=$(HARBOR_URL)/$(imageRepository):$(imageTag)
+                  displayName: 'Update image tag in prod overlay'
+
+                - script: |
+                    git config user.email "azure-pipelines@dev.azure.com"
+                    git config user.name "Azure Pipelines"
+                    git add -A
+                    git diff --staged --quiet || git commit -m "ci(prod): update image to $(imageTag) [skip ci]"
+                    git push origin HEAD:main
+                  displayName: 'Commit and push prod overlay'
+
+                - script: |
+                    echo "============================================"
+                    echo "  PRODUCTION overlay updated."
+                    echo "  Image: $(HARBOR_URL)/$(imageRepository):$(imageTag)"
+                    echo ""
+                    echo "  NEXT STEP: Trigger Argo CD sync manually"
+                    echo "  during the approved change window:"
+                    echo ""
+                    echo "    argocd app sync myapp-prod"
+                    echo "============================================"
+                  displayName: 'Reminder — manual Argo CD sync during change window'

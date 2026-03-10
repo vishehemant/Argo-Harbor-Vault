@@ -1,0 +1,21 @@
+# UAT environment: moderate resources, matches prod replica count
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample-web
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: web
+          env:
+            - name: APP_ENV
+              value: "uat"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

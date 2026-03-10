@@ -1,0 +1,116 @@
+# Prometheus Alert Rules for the Harbor + Vault + Argo CD stack.
+#
+# These fire alerts based on metrics scraped from each component.
+# Alerts are sent to Alertmanager, which routes them to Slack/PagerDuty/etc.
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: harbor-vault-argocd-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prometheus
+spec:
+  groups:
+    # ─────────────── Argo CD Alerts ───────────────
+    - name: argocd.rules
+      rules:
+        - alert: ArgoCDSyncFailed
+          expr: argocd_app_info{sync_status="Unknown"} == 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Argo CD app {{ $labels.name }} sync failed"
+            description: "Application {{ $labels.name }} has been in Unknown sync status for 5 minutes."
+
+        - alert: ArgoCDAppDegraded
+          expr: argocd_app_info{health_status="Degraded"} == 1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Argo CD app {{ $labels.name }} is Degraded"
+            description: "Application {{ $labels.name }} health is Degraded. Check pod status."
+
+        - alert: ArgoCDAppOutOfSync
+          expr: argocd_app_info{sync_status="OutOfSync"} == 1
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Argo CD app {{ $labels.name }} is OutOfSync for 30m"
+            description: "Application {{ $labels.name }} has been OutOfSync for 30 minutes. A manual sync may be pending."
+
+    # ─────────────── Vault Alerts ───────────────
+    - name: vault.rules
+      rules:
+        - alert: VaultSealed
+          expr: vault_core_unsealed == 0
+          for: 1m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "Vault is SEALED"
+            description: "Vault instance {{ $labels.instance }} is sealed. Unseal immediately — no new secrets can be read."
+
+        - alert: VaultHighTokenCreation
+          expr: rate(vault_token_create_count[5m]) > 50
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High Vault token creation rate"
+            description: "Vault is creating tokens at {{ $value }}/s. This could indicate a misconfigured client in a retry loop."
+
+        - alert: VaultLeadershipLoss
+          expr: vault_core_leadership_lost_count > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Vault leadership lost"
+            description: "Vault lost HA leadership. Check Raft cluster health."
+
+    # ─────────────── Harbor Alerts ───────────────
+    - name: harbor.rules
+      rules:
+        - alert: HarborCriticalVulnerabilities
+          expr: harbor_project_artifact_dangerous_count > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Harbor project has images with critical vulnerabilities"
+            description: "Project {{ $labels.project_name }} has {{ $value }} images with critical/high vulnerabilities."
+
+        - alert: HarborStorageHigh
+          expr: (harbor_project_quota_usage_byte / harbor_project_quota_byte) > 0.85
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "Harbor project storage > 85%"
+            description: "Project {{ $labels.project_name }} is using {{ $value | humanizePercentage }} of its storage quota."
+
+    # ─────────────── Application Alerts ───────────────
+    - name: application.rules
+      rules:
+        - alert: PodCrashLooping
+          expr: rate(kube_pod_container_status_restarts_total[15m]) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Pod {{ $labels.pod }} is crash-looping"
+            description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is restarting frequently."
+
+        - alert: PodHighMemoryUsage
+          expr: (container_memory_usage_bytes / container_spec_memory_limit_bytes) > 0.9
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pod {{ $labels.pod }} memory usage > 90%"
+            description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is using {{ $value | humanizePercentage }} of its memory limit."
