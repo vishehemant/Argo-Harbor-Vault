@@ -1,0 +1,51 @@
+# Default values — overridden per environment via values/dev.yaml, values/uat.yaml, values/prod.yaml
+
+replicaCount: 1
+
+image:
+  repository: harbor.example.com/my-app/sample-web
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: harbor-pull-secret
+
+environment: dev
+
+# Vault path prefix for AVP placeholders
+# Each env overrides this: dev, uat, prod
+vaultPathPrefix: "secret/data/dev/myapp"
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: false
+  host: ""
+  tls: false
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilization: 80
+
+probes:
+  readiness:
+    path: /health
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  liveness:
+    path: /health
+    initialDelaySeconds: 15
+    periodSeconds: 30

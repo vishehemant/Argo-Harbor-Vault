@@ -1,0 +1,27 @@
+# Production environment overrides
+
+replicaCount: 3
+environment: production
+vaultPathPrefix: "secret/data/prod/myapp"
+
+image:
+  tag: "latest"
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+ingress:
+  enabled: true
+  host: myapp.example.com
+  tls: true
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilization: 75

@@ -1,0 +1,220 @@
+# Azure Pipelines — Multi-Stage CI/CD with Helm
+#
+# Stages:
+#   1. Build   — build image, Trivy scan, push to Harbor
+#   2. Dev     — update image.tag in values/dev.yaml → Argo CD auto-syncs
+#   3. UAT     — approval gate → update values/uat.yaml → manual Argo CD sync
+#   4. Prod    — approval gate → update values/prod.yaml → manual Argo CD sync
+#
+# How it updates the Helm values file:
+#   Uses yq to change image.tag in the per-environment values file.
+#   Argo CD detects the Git change and (for dev) auto-syncs, or (for uat/prod)
+#   shows "OutOfSync" until the team triggers a manual sync.
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - '01-harbor-basics/app/**'
+      - '01-harbor-basics/Dockerfile'
+
+variables:
+  - group: harbor-credentials
+  - name: imageRepository
+    value: 'my-app/sample-web'
+  - name: dockerfilePath
+    value: '01-harbor-basics/Dockerfile'
+  - name: buildContext
+    value: '01-harbor-basics'
+  - name: tag
+    value: '$(Build.BuildId)'
+  - name: helmChartPath
+    value: '08-real-world-setup/helm-chart'
+
+stages:
+  # ─────────────────────────────────────────────────────────
+  # Stage 1: Build, Scan, Push to Harbor
+  # ─────────────────────────────────────────────────────────
+  - stage: Build
+    displayName: 'Build & Push Image'
+    jobs:
+      - job: BuildAndPush
+        displayName: 'Build, Scan, Push to Harbor'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Docker@2
+            displayName: 'Login to Harbor'
+            inputs:
+              command: login
+              containerRegistry: 'harbor-service-connection'
+
+          - task: Docker@2
+            displayName: 'Build image'
+            inputs:
+              command: build
+              repository: '$(imageRepository)'
+              dockerfile: '$(dockerfilePath)'
+              buildContext: '$(buildContext)'
+              tags: |
+                $(tag)
+                latest
+
+          - script: |
+              docker run --rm \
+                -v /var/run/docker.sock:/var/run/docker.sock \
+                aquasec/trivy:latest image \
+                --severity CRITICAL,HIGH \
+                --exit-code 1 \
+                --ignore-unfixed \
+                $(HARBOR_URL)/$(imageRepository):$(tag)
+            displayName: 'Trivy vulnerability scan'
+
+          - task: Docker@2
+            displayName: 'Push to Harbor'
+            inputs:
+              command: push
+              repository: '$(imageRepository)'
+              tags: |
+                $(tag)
+                latest
+
+          - script: |
+              echo "##vso[task.setvariable variable=imageTag;isOutput=true]$(tag)"
+            displayName: 'Set output variable'
+            name: setImageTag
+
+  # ─────────────────────────────────────────────────────────
+  # Stage 2: Deploy to Dev (automatic)
+  # ─────────────────────────────────────────────────────────
+  - stage: DeployDev
+    displayName: 'Deploy to Dev'
+    dependsOn: Build
+    variables:
+      imageTag: $[ stageDependencies.Build.BuildAndPush.outputs['setImageTag.imageTag'] ]
+    jobs:
+      - job: UpdateDevValues
+        displayName: 'Update dev Helm values'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: self
+            persistCredentials: true
+
+          - script: |
+              sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+              sudo chmod +x /usr/local/bin/yq
+            displayName: 'Install yq'
+
+          - script: |
+              yq e '.image.tag = "$(imageTag)"' -i $(helmChartPath)/values/dev.yaml
+              echo "Updated values/dev.yaml:"
+              cat $(helmChartPath)/values/dev.yaml
+            displayName: 'Update image tag in dev values'
+
+          - script: |
+              git config user.email "azure-pipelines@dev.azure.com"
+              git config user.name "Azure Pipelines"
+              git add $(helmChartPath)/values/dev.yaml
+              git diff --staged --quiet || git commit -m "ci(dev): update image tag to $(imageTag) [skip ci]"
+              git push origin HEAD:main
+            displayName: 'Commit and push'
+
+  # ─────────────────────────────────────────────────────────
+  # Stage 3: Deploy to UAT (requires approval)
+  # ─────────────────────────────────────────────────────────
+  - stage: DeployUAT
+    displayName: 'Deploy to UAT'
+    dependsOn: DeployDev
+    variables:
+      imageTag: $[ stageDependencies.Build.BuildAndPush.outputs['setImageTag.imageTag'] ]
+    jobs:
+      - deployment: DeployToUAT
+        displayName: 'Deploy to UAT (approval required)'
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'UAT'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  persistCredentials: true
+
+                - script: |
+                    sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+                    sudo chmod +x /usr/local/bin/yq
+                  displayName: 'Install yq'
+
+                - script: |
+                    yq e '.image.tag = "$(imageTag)"' -i $(helmChartPath)/values/uat.yaml
+                    echo "Updated values/uat.yaml:"
+                    cat $(helmChartPath)/values/uat.yaml
+                  displayName: 'Update image tag in UAT values'
+
+                - script: |
+                    git config user.email "azure-pipelines@dev.azure.com"
+                    git config user.name "Azure Pipelines"
+                    git add $(helmChartPath)/values/uat.yaml
+                    git diff --staged --quiet || git commit -m "ci(uat): update image tag to $(imageTag) [skip ci]"
+                    git push origin HEAD:main
+                  displayName: 'Commit and push'
+
+                - script: |
+                    echo "================================================"
+                    echo "  UAT values updated. Trigger Argo CD sync:"
+                    echo "    argocd app sync myapp-uat"
+                    echo "================================================"
+                  displayName: 'Manual Argo CD sync reminder'
+
+  # ─────────────────────────────────────────────────────────
+  # Stage 4: Deploy to Production (requires approval)
+  # ─────────────────────────────────────────────────────────
+  - stage: DeployProd
+    displayName: 'Deploy to Production'
+    dependsOn: DeployUAT
+    variables:
+      imageTag: $[ stageDependencies.Build.BuildAndPush.outputs['setImageTag.imageTag'] ]
+    jobs:
+      - deployment: DeployToProduction
+        displayName: 'Deploy to Prod (approval required)'
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'Production'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  persistCredentials: true
+
+                - script: |
+                    sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+                    sudo chmod +x /usr/local/bin/yq
+                  displayName: 'Install yq'
+
+                - script: |
+                    yq e '.image.tag = "$(imageTag)"' -i $(helmChartPath)/values/prod.yaml
+                    echo "Updated values/prod.yaml:"
+                    cat $(helmChartPath)/values/prod.yaml
+                  displayName: 'Update image tag in prod values'
+
+                - script: |
+                    git config user.email "azure-pipelines@dev.azure.com"
+                    git config user.name "Azure Pipelines"
+                    git add $(helmChartPath)/values/prod.yaml
+                    git diff --staged --quiet || git commit -m "ci(prod): update image tag to $(imageTag) [skip ci]"
+                    git push origin HEAD:main
+                  displayName: 'Commit and push'
+
+                - script: |
+                    echo "================================================"
+                    echo "  PRODUCTION values updated."
+                    echo "  Image: $(HARBOR_URL)/$(imageRepository):$(imageTag)"
+                    echo ""
+                    echo "  Trigger Argo CD sync during change window:"
+                    echo "    argocd app sync myapp-prod"
+                    echo "================================================"
+                  displayName: 'Manual Argo CD sync reminder'

@@ -1,0 +1,141 @@
+# Argo CD Applications using Helm templates — one per environment.
+#
+# Each Application points to the SAME Helm chart but uses a
+# different values file (values/dev.yaml, values/uat.yaml, values/prod.yaml).
+#
+# The AVP-Helm plugin chain:
+#   1. Argo CD renders the Helm chart (helm template)
+#   2. AVP processes the output and resolves <path:...#key> placeholders
+#   3. The final manifests (with real secrets) are applied to the cluster
+#
+# Sync policy:
+#   DEV  — auto-sync (fast iteration)
+#   UAT  — manual sync (change manager approves pipeline stage first)
+#   PROD — manual sync (full change request + approved change window)
+
+# ─────────────────────────── DEV ───────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp-dev
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vishehemant/Argo-Harbor-Vault.git
+    targetRevision: cursor/harbor-argo-vault-integration-aad0
+    path: 08-real-world-setup/helm-chart
+
+    # Helm configuration
+    helm:
+      valueFiles:
+        - values/dev.yaml
+
+    # AVP-Helm plugin: renders Helm first, then resolves AVP placeholders
+    plugin:
+      name: argocd-vault-plugin-helm
+      env:
+        - name: HELM_VALUES
+          value: values/dev.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: myapp-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+
+---
+# ─────────────────────────── UAT ───────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp-uat
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: deployments
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: deployments
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vishehemant/Argo-Harbor-Vault.git
+    targetRevision: cursor/harbor-argo-vault-integration-aad0
+    path: 08-real-world-setup/helm-chart
+    helm:
+      valueFiles:
+        - values/uat.yaml
+    plugin:
+      name: argocd-vault-plugin-helm
+      env:
+        - name: HELM_VALUES
+          value: values/uat.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: myapp-uat
+  syncPolicy:
+    # NO auto-sync — manual trigger after change manager approval
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+
+---
+# ─────────────────────────── PROD ───────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: prod-deployments
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: prod-deployments
+    notifications.argoproj.io/subscribe.on-health-degraded.slack: prod-deployments
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vishehemant/Argo-Harbor-Vault.git
+    targetRevision: cursor/harbor-argo-vault-integration-aad0
+    path: 08-real-world-setup/helm-chart
+    helm:
+      valueFiles:
+        - values/prod.yaml
+    plugin:
+      name: argocd-vault-plugin-helm
+      env:
+        - name: HELM_VALUES
+          value: values/prod.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: myapp-prod
+  syncPolicy:
+    # NO auto-sync — manual trigger during approved change window
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m

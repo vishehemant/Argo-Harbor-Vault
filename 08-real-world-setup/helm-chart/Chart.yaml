@@ -1,0 +1,6 @@
+apiVersion: v2
+name: sample-web
+description: Sample web application deployed via Argo CD with Vault secrets
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

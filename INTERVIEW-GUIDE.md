@@ -138,12 +138,12 @@ When the interviewer asks "walk me through a deployment," use this structure:
 > 3. Developer raises a **change request** for UAT
 > 4. Change manager reviews: what changed, scan results, dev test results
 > 5. Change manager **approves the UAT stage** in Azure Pipelines
-> 6. Pipeline updates UAT overlay in Git
+> 6. Pipeline uses `yq` to update `image.tag` in the UAT Helm values file and commits to Git
 > 7. Team **manually syncs** Argo CD for UAT
 > 8. QA validates in UAT
 > 9. Change request updated for **prod deployment** with UAT sign-off
 > 10. Change manager approves the **prod stage** during the change window
-> 11. Pipeline updates prod overlay
+> 11. Pipeline updates the prod Helm values file
 > 12. Senior engineer **manually syncs** Argo CD for prod
 > 13. Post-deployment validation using Grafana dashboards
 >
@@ -218,11 +218,21 @@ When the interviewer asks "walk me through a deployment," use this structure:
 
 ### Q: How do you handle multiple environments?
 
-> "Three layers of separation:
-> 1. **Vault paths** — `secret/dev/myapp/`, `secret/uat/myapp/`, `secret/prod/myapp/` with **separate policies per environment**. The dev Vault role cannot read prod secrets.
-> 2. **Kustomize overlays** — a `base/` directory with common manifests, plus `overlays/dev/`, `overlays/uat/`, `overlays/prod/` with environment-specific patches (replicas, resource limits, image tags, ingress hostnames)
-> 3. **Argo CD Applications** — three separate Application CRDs, each pointing to the correct overlay. Dev has `automated` sync, UAT and prod have **manual sync** only.
-> 4. **Azure Pipeline stages** — each stage targets a different overlay and has its own approval gate."
+> "We use a **single Helm chart** with **per-environment values files**:
+> 1. **Helm chart** — one set of templates shared across all environments (`templates/deployment.yaml`, `templates/secret.yaml`, etc.)
+> 2. **Values files** — `values/dev.yaml`, `values/uat.yaml`, `values/prod.yaml` override replicas, resources, image tags, ingress hostnames, and the Vault path prefix
+> 3. **Vault paths** — `secret/dev/myapp/`, `secret/uat/myapp/`, `secret/prod/myapp/` with **separate policies per environment**. The dev Vault role cannot read prod secrets.
+> 4. **Argo CD Applications** — three Application CRDs, each pointing to the same chart but a different values file. Dev has `automated` sync, UAT and prod have **manual sync** only.
+> 5. **Azure Pipeline stages** — each stage uses `yq` to update `image.tag` in the environment's values file and has its own approval gate."
+
+### Q: Why Helm templates instead of Kustomize?
+
+> "We chose Helm for several reasons:
+> - **Templating logic** — `if/else`, `range`, and `with` blocks let us conditionally include resources (e.g., HPA only in prod, topology constraints only in prod)
+> - **Single chart, multiple values** — one set of templates with `values/dev.yaml`, `values/uat.yaml`, `values/prod.yaml`. Cleaner than maintaining Kustomize patches per environment.
+> - **Reusability** — we can package the chart and share it across teams. Other teams install the same chart with their own values.
+> - **AVP integration** — the AVP-Helm plugin runs `helm template` first (resolves Go templates), then AVP resolves `<path:...#key>` placeholders. Two-stage rendering works seamlessly.
+> - **Ecosystem** — Helm is widely understood; most third-party tools (Argo CD, Flux, Terraform) have native Helm support."
 
 ### Q: How do you roll back a failed deployment?
 
@@ -315,23 +325,27 @@ Azure Pipelines:  [DEV auto] ──approval──► [UAT] ──approval──�
 Azure Pipelines ──build+push──► Harbor (Trivy scan)
 ```
 
-**Step 4:** Draw the Git repo with Kustomize structure
+**Step 4:** Draw the Git repo with Helm structure
 ```
-Git Repo:  base/ + overlays/dev/ + overlays/uat/ + overlays/prod/
+Git Repo:  helm-chart/
+             templates/      (shared)
+             values/dev.yaml
+             values/uat.yaml
+             values/prod.yaml
 ```
 
 **Step 5:** Draw Argo CD with manual vs auto
 ```
 Argo CD ──watches──► Git
   │
-  ├── dev app    (auto-sync)
-  ├── uat app    (manual sync, post-approval)
-  └── prod app   (manual sync, change window)
+  ├── dev app    (helm + values/dev.yaml,  auto-sync)
+  ├── uat app    (helm + values/uat.yaml,  manual sync, post-approval)
+  └── prod app   (helm + values/prod.yaml, manual sync, change window)
 ```
 
-**Step 6:** Draw Vault with per-env paths
+**Step 6:** Draw Vault with per-env paths. Explain AVP-Helm: Helm renders first, then AVP resolves secrets.
 ```
-Argo CD (AVP) ──fetch secrets──► Vault
+Argo CD (helm template → AVP) ──fetch secrets──► Vault
                                    ├── secret/dev/
                                    ├── secret/uat/
                                    └── secret/prod/
@@ -356,7 +370,7 @@ Argo CD ──deploy──► Kubernetes (dev/uat/prod clusters)
 
 When a developer merges a PR, the pipeline builds a Docker image, runs tests, and pushes the image to **Harbor** — our private container registry. Harbor auto-scans every image with Trivy for vulnerabilities.
 
-For deployment, we use **Argo CD** in a GitOps model. The pipeline doesn't deploy directly — instead, it updates the image tag in our Kustomize overlays in Git. Each environment has its own overlay. For dev, Argo CD auto-syncs immediately. For UAT and prod, we follow **change management** — the change manager approves the pipeline stage, and then the team manually triggers the Argo CD sync during the approved window.
+For deployment, we use **Argo CD** in a GitOps model. The pipeline doesn't deploy directly — instead, it uses `yq` to update the image tag in our **Helm values files** in Git. We have a single Helm chart with per-environment values: `values/dev.yaml`, `values/uat.yaml`, `values/prod.yaml`. For dev, Argo CD auto-syncs immediately. For UAT and prod, we follow **change management** — the change manager approves the pipeline stage, and then the team manually triggers the Argo CD sync during the approved window.
 
 Secrets are managed by **HashiCorp Vault**. Our manifests in Git contain placeholders, and the **Argo Vault Plugin** resolves them from Vault at sync time. Each environment has isolated Vault paths and policies, so the dev role can't access production secrets.
 
