@@ -59,6 +59,8 @@ cd 01-harbor-basics/
 # Follow the README.md in each directory
 ```
 
+> **Want to practice hands-on?** See the [PRACTICE-GUIDE.md](./PRACTICE-GUIDE.md) for a complete local setup walkthrough using kind, with step-by-step exercises and verification checkpoints (~2.5 hours total).
+
 ## How the Three Tools Fit Together
 
 ### Harbor — "Where your container images live"
