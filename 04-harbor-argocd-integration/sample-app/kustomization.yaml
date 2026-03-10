@@ -6,8 +6,9 @@ namespace: my-app
 resources:
   - deployment.yaml
   - service.yaml
-  - ../registry-credentials/image-pull-secret.yaml
+  - image-pull-secret.yaml
 
-commonLabels:
-  managed-by: argocd
-  scenario: "04-harbor-argocd"
+labels:
+  - pairs:
+      managed-by: argocd
+      scenario: "04-harbor-argocd"

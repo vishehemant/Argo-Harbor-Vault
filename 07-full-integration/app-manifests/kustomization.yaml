@@ -11,9 +11,10 @@ resources:
   - service.yaml
   - ingress.yaml
 
-commonLabels:
-  managed-by: argocd
-  scenario: "07-full-integration"
+labels:
+  - pairs:
+      managed-by: argocd
+      scenario: "07-full-integration"
 
 # The CI pipeline updates this image tag automatically
 images:

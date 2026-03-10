@@ -5,6 +5,7 @@ resources:
   - deployment.yaml
   - service.yaml
 
-commonLabels:
-  managed-by: argocd
-  scenario: "03-basics"
+labels:
+  - pairs:
+      managed-by: argocd
+      scenario: "03-basics"
