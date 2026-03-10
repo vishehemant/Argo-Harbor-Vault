@@ -1,0 +1,58 @@
+# Deployment that pulls its image from a private Harbor registry.
+#
+# Key differences from the basic example (03-argocd-basics):
+#   1. Image URL points to Harbor: harbor.example.com/my-app/sample-web:v1.0.0
+#   2. imagePullSecrets references the Harbor credential Secret
+#   3. Uses the custom app built in 01-harbor-basics/
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample-web
+  labels:
+    app: sample-web
+    scenario: harbor-argocd
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: sample-web
+  template:
+    metadata:
+      labels:
+        app: sample-web
+    spec:
+      # THIS is the key integration point:
+      # Tell Kubernetes to use Harbor credentials when pulling the image
+      imagePullSecrets:
+        - name: harbor-pull-secret
+
+      containers:
+        - name: web
+          # Image hosted in Harbor (pushed in 01-harbor-basics/)
+          image: harbor.example.com/my-app/sample-web:v1.0.0
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: APP_VERSION
+              value: "1.0.0"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30

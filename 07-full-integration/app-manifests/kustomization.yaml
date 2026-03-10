@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: production
+
+resources:
+  - namespace.yaml
+  - external-secret.yaml
+  - secret.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+
+commonLabels:
+  managed-by: argocd
+  scenario: "07-full-integration"
+
+# The CI pipeline updates this image tag automatically
+images:
+  - name: harbor.example.com/my-app/sample-web
+    newTag: v1.0.0

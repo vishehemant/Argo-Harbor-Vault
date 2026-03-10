@@ -1,0 +1,59 @@
+# Argo CD Application CRD
+#
+# This tells Argo CD: "Watch this Git repo and deploy its manifests to the cluster."
+#
+# Key fields explained inline below.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  # Name shown in the Argo CD UI
+  name: sample-app
+  # MUST be in the argocd namespace (where Argo CD is installed)
+  namespace: argocd
+  # Finalizer ensures resources are cleaned up when the Application is deleted
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # Project restricts which repos/clusters/namespaces this app can use.
+  # "default" is the built-in project with no restrictions.
+  project: default
+
+  # SOURCE: Where to get the manifests
+  source:
+    # Git repository URL
+    repoURL: https://github.com/vishehemant/Argo-Harbor-Vault.git
+    # Branch, tag, or commit SHA to track
+    targetRevision: main
+    # Path within the repo containing the manifests
+    path: 03-argocd-basics/sample-app
+
+  # DESTINATION: Where to deploy
+  destination:
+    # The cluster to deploy to (this is the in-cluster default)
+    server: https://kubernetes.default.svc
+    # Target namespace
+    namespace: sample-app
+
+  # SYNC POLICY: How and when to sync
+  syncPolicy:
+    # Automated sync: Argo CD will automatically sync when Git changes
+    automated:
+      # Prune: delete resources from cluster that are no longer in Git
+      prune: true
+      # Self-heal: revert manual changes made directly to the cluster
+      selfHeal: true
+    # Additional sync options
+    syncOptions:
+      # Create the namespace if it doesn't exist
+      - CreateNamespace=true
+      # Apply out-of-sync resources only (faster for large apps)
+      - ApplyOutOfSyncOnly=true
+
+    # Retry on failure
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

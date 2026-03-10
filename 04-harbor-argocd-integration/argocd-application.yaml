@@ -1,0 +1,27 @@
+# Argo CD Application for the Harbor-integrated sample app.
+#
+# This Application deploys manifests that reference private Harbor images.
+# The image pull secret is included in the Kustomize overlay.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: harbor-sample-app
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vishehemant/Argo-Harbor-Vault.git
+    targetRevision: main
+    path: 04-harbor-argocd-integration/sample-app
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: my-app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

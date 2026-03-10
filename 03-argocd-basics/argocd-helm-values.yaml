@@ -1,0 +1,99 @@
+# Argo CD Helm Chart Values
+# Reference: https://github.com/argoproj/argo-helm/tree/main/charts/argo-cd
+
+# -- Global settings
+global:
+  # Default log level
+  logging:
+    level: info
+
+# -- API Server (serves UI and handles CLI/API requests)
+server:
+  # Expose via NodePort for easy access in development
+  service:
+    type: NodePort
+    nodePortHttp: 30080
+    nodePortHttps: 30443
+
+  # Extra args — run insecure (no TLS) for development
+  # In production, configure proper TLS certificates
+  extraArgs:
+    - --insecure
+
+  # Resource limits
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# -- Repo Server (clones Git repos, renders manifests)
+repoServer:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  # Volume mounts for custom plugins (used in scenario 05 with AVP)
+  volumes:
+    - name: custom-tools
+      emptyDir: {}
+
+  # Init containers to install custom tools (like Argo Vault Plugin)
+  initContainers: []
+
+# -- Application Controller (watches apps, performs syncs)
+controller:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+# -- Redis (caching layer)
+redis:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+# -- Application Set Controller (generates Applications from templates)
+applicationSet:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+# -- Notifications Controller (sends alerts on sync status changes)
+notifications:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+# -- Config: default Argo CD ConfigMap settings
+configs:
+  # Repository credentials (can also be added via UI/CLI)
+  repositories: {}
+
+  # Known SSH hosts (for private Git repos over SSH)
+  ssh:
+    extraHosts: ""
+
+  # ConfigMap overrides
+  cm:
+    # Allow status badges in README files
+    statusbadge.enabled: "true"
+
+    # Resource tracking method
+    application.resourceTrackingMethod: annotation
+
+  # RBAC configuration
+  rbac:
+    # Default policy: allow read-only access to all authenticated users
+    policy.default: role:readonly
+    policy.csv: |
+      p, role:admin, applications, *, */*, allow
+      p, role:admin, clusters, get, *, allow
+      p, role:admin, repositories, *, *, allow
+      g, admin, role:admin
