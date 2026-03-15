@@ -1,0 +1,7 @@
+# Trivy configuration for Tetris DevSecOps scanning
+# Use: trivy image --config trivy-config.yaml <image>
+
+severity: CRITICAL,HIGH
+ignore-unfixed: true
+exit-code: 1
+format: table

@@ -1,0 +1,27 @@
+# Helm values for kube-prometheus-stack (Tetris DevSecOps)
+# Install: helm install prometheus prometheus-community/kube-prometheus-stack -f kube-prometheus-values.yaml -n monitoring
+
+grafana:
+  adminPassword: prom-operator
+  service:
+    type: NodePort
+    nodePort: 30030
+  persistence:
+    enabled: true
+    size: 2Gi
+
+prometheus:
+  prometheusSpec:
+    retention: 7d
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+
+# Pick up all ServiceMonitors (including from Argo CD, Harbor, JFrog namespaces)
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false

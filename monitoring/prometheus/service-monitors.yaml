@@ -1,0 +1,57 @@
+# ServiceMonitors for Tetris DevSecOps infrastructure
+# Apply after kube-prometheus-stack is installed
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd-metrics
+  namespace: argocd
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-metrics
+  namespaceSelector:
+    matchNames:
+      - argocd
+  endpoints:
+    - port: metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: harbor-exporter
+  namespace: harbor
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      component: exporter
+  namespaceSelector:
+    matchNames:
+      - harbor
+  endpoints:
+    - port: metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: jfrog-artifactory
+  namespace: jfrog
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: artifactory
+  namespaceSelector:
+    matchNames:
+      - jfrog
+  endpoints:
+    - port: http
+      path: /artifactory/api/v1/metrics
+      interval: 30s

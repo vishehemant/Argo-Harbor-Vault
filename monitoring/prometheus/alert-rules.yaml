@@ -1,0 +1,68 @@
+# PrometheusRule for Tetris DevSecOps alerts
+# Apply with kube-prometheus-stack
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: tetris-devsecops-alerts
+  labels:
+    release: prometheus
+spec:
+  groups:
+    - name: argocd
+      rules:
+        - alert: ArgoCDSyncFailed
+          expr: argocd_app_info{sync_status!="Synced"} == 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Argo CD application {{ $labels.name }} sync failed"
+
+        - alert: ArgoCDAppDegraded
+          expr: argocd_app_health_status{health_status!="Healthy"} == 1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Argo CD application {{ $labels.name }} is degraded"
+
+        - alert: ArgoCDAppOutOfSync
+          expr: argocd_app_info{sync_status="OutOfSync"} == 1
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Argo CD application {{ $labels.name }} out of sync for 30+ minutes"
+
+    - name: harbor
+      rules:
+        - alert: HarborCriticalVulnerabilities
+          expr: |
+            sum(harbor_project_artifact_total) > 0 and
+            (harbor_scan_critical_vulnerabilities > 0 or harbor_scan_high_vulnerabilities > 0)
+          labels:
+            severity: critical
+          annotations:
+            summary: "Harbor project has critical/high vulnerabilities"
+
+    - name: kubernetes
+      rules:
+        - alert: PodCrashLooping
+          expr: |
+            rate(kube_pod_container_status_restarts_total[15m]) > 0 or
+            kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"} == 1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is crash looping"
+
+        - alert: PodHighMemoryUsage
+          expr: |
+            (container_memory_working_set_bytes / container_spec_memory_limit_bytes) > 0.9
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} memory usage > 90%"
