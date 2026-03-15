@@ -1,0 +1,230 @@
+# Tetris Kubernetes DevSecOps Pipeline
+# Image is built ONCE in Build stage and promoted dev -> uat -> prod
+
+trigger:
+  branches:
+    include:
+      - main
+      - cursor/harbor-argo-vault-integration-aad0
+  paths:
+    include:
+      - app/*
+      - docker/*
+      - helm-chart/*
+      - azure-pipelines/*
+
+variables:
+  - group: harbor-credentials
+
+stages:
+  # Stage 1: Security Checks
+  - stage: SecurityChecks
+    displayName: Security Checks
+    jobs:
+      - job: securityJob
+        displayName: Run Security Scans
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+            fetchDepth: 0
+
+          - task: NodeTool@0
+            displayName: 'Install Node.js'
+            inputs:
+              versionSpec: '18.x'
+
+          - script: |
+              if [ -f package.json ]; then
+                npm ci 2>/dev/null || npm install
+                npm audit --audit-level=moderate || echo "npm audit completed (review findings)"
+              else
+                echo "No package.json found - skipping npm audit"
+              fi
+            displayName: 'npm audit (skip if no package.json)'
+            continueOnError: true
+
+          - script: |
+              if ls app/*.js 1>/dev/null 2>&1; then
+                npx eslint app/*.js --max-warnings 0
+              else
+                echo "No .js files in app/ - skipping ESLint"
+              fi
+            displayName: 'ESLint on app/*.js'
+
+          - script: |
+              sudo apt-get update && sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+              wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+              echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+              sudo apt-get update && sudo apt-get install -y trivy
+            displayName: 'Install Trivy'
+
+          - script: |
+              trivy fs --security-checks vuln,secret,config app/
+            displayName: 'Trivy filesystem scan (vuln,secret,config)'
+            continueOnError: true
+
+  # Stage 2: Build
+  - stage: Build
+    displayName: Build
+    dependsOn: SecurityChecks
+    jobs:
+      - job: buildJob
+        displayName: Build and Push Docker Image
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+
+          - script: |
+              docker build -f docker/Dockerfile \
+                -t $(HARBOR_URL)/tetris/game:$(Build.BuildId) \
+                -t $(HARBOR_URL)/tetris/game:latest \
+                .
+            displayName: 'Docker build'
+            env:
+              HARBOR_URL: $(HARBOR_URL)
+
+          - script: |
+              sudo apt-get update && sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+              wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+              echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+              sudo apt-get update && sudo apt-get install -y trivy
+            displayName: 'Install Trivy'
+
+          - script: |
+              trivy image --severity CRITICAL,HIGH --exit-code 1 --ignore-unfixed $(HARBOR_URL)/tetris/game:$(Build.BuildId)
+            displayName: 'Trivy image scan (CRITICAL,HIGH)'
+            env:
+              HARBOR_URL: $(HARBOR_URL)
+
+          - task: Docker@2
+            displayName: 'Docker login Harbor'
+            inputs:
+              command: login
+              containerRegistry: 'harbor-service-connection'
+
+          - script: |
+              docker push $(HARBOR_URL)/tetris/game:$(Build.BuildId)
+              docker push $(HARBOR_URL)/tetris/game:latest
+            displayName: 'Docker push to Harbor'
+            env:
+              HARBOR_URL: $(HARBOR_URL)
+
+          - script: |
+              echo "##vso[task.setvariable variable=imageTag;isOutput=true]$(Build.BuildId)"
+            name: setImageTag
+            displayName: 'Set imageTag output variable'
+
+  # Stage 3: Deploy Dev (automatic, no approval)
+  - stage: DeployDev
+    displayName: Deploy to Dev
+    dependsOn: Build
+    jobs:
+      - job: deployDevJob
+        displayName: Update Dev Helm Values
+        pool:
+          vmImage: ubuntu-latest
+        variables:
+          imageTag: $[ stageDependencies.Build.buildJob.outputs['setImageTag.imageTag'] ]
+        steps:
+          - checkout: self
+            persistCredentials: true
+
+          - script: |
+              sudo apt-get update && sudo apt-get install -y wget
+              sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+              sudo chmod +x /usr/local/bin/yq
+            displayName: 'Install yq'
+
+          - script: |
+              yq -i '.image.tag = "$(imageTag)"' helm-chart/values/dev/values.yaml
+              cat helm-chart/values/dev/values.yaml
+            displayName: 'Update image.tag in dev values'
+
+          - script: |
+              git config user.email "azure-pipelines@devops"
+              git config user.name "Azure Pipelines"
+              git add helm-chart/values/dev/values.yaml
+              git diff --staged --quiet || (git commit -m "ci(dev): tetris $(imageTag) [skip ci]" && git push)
+            displayName: 'Git commit and push'
+            env:
+              imageTag: $(imageTag)
+
+  # Stage 4: Deploy UAT (approval gate)
+  - stage: DeployUAT
+    displayName: Deploy to UAT
+    dependsOn: DeployDev
+    jobs:
+      - deployment: deployUATJob
+        displayName: Update UAT Helm Values
+        environment: UAT
+        pool:
+          vmImage: ubuntu-latest
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  persistCredentials: true
+
+                - script: |
+                    sudo apt-get update && sudo apt-get install -y wget
+                    sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+                    sudo chmod +x /usr/local/bin/yq
+                  displayName: 'Install yq'
+
+                - script: |
+                    yq -i '.image.tag = "$(Build.BuildId)"' helm-chart/values/uat/values.yaml
+                    cat helm-chart/values/uat/values.yaml
+                  displayName: 'Update image.tag in UAT values'
+
+                - script: |
+                    git config user.email "azure-pipelines@devops"
+                    git config user.name "Azure Pipelines"
+                    git add helm-chart/values/uat/values.yaml
+                    git diff --staged --quiet || (git commit -m "ci(uat): tetris $(Build.BuildId) [skip ci]" && git push)
+                  displayName: 'Git commit and push'
+
+                - script: |
+                    echo "##vso[task.logissue type=warning]REMINDER: Run 'argocd app sync tetris-uat' manually to deploy to UAT"
+                  displayName: 'Reminder - Manual Argo CD sync'
+
+  # Stage 5: Deploy Prod (approval gate)
+  - stage: DeployProd
+    displayName: Deploy to Production
+    dependsOn: DeployUAT
+    jobs:
+      - deployment: deployProdJob
+        displayName: Update Prod Helm Values
+        environment: Production
+        pool:
+          vmImage: ubuntu-latest
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  persistCredentials: true
+
+                - script: |
+                    sudo apt-get update && sudo apt-get install -y wget
+                    sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+                    sudo chmod +x /usr/local/bin/yq
+                  displayName: 'Install yq'
+
+                - script: |
+                    yq -i '.image.tag = "$(Build.BuildId)"' helm-chart/values/prod/values.yaml
+                    cat helm-chart/values/prod/values.yaml
+                  displayName: 'Update image.tag in prod values'
+
+                - script: |
+                    git config user.email "azure-pipelines@devops"
+                    git config user.name "Azure Pipelines"
+                    git add helm-chart/values/prod/values.yaml
+                    git diff --staged --quiet || (git commit -m "ci(prod): tetris $(Build.BuildId) [skip ci]" && git push)
+                  displayName: 'Git commit and push'
+
+                - script: |
+                    echo "##vso[task.logissue type=warning]REMINDER: Run 'argocd app sync tetris-prod' during change window"
+                  displayName: 'Reminder - Manual Argo CD sync'

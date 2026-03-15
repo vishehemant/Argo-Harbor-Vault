@@ -1,0 +1,84 @@
+# Argo CD Applications for Tetris DevSecOps
+# repoURL: https://github.com/vishehemant/Argo-Harbor-Vault.git
+# targetRevision: cursor/harbor-argo-vault-integration-aad0
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tetris-dev
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vishehemant/Argo-Harbor-Vault.git
+    targetRevision: cursor/harbor-argo-vault-integration-aad0
+    path: helm-chart
+    helm:
+      valueFiles:
+        - values/dev/values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tetris-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tetris-uat
+  namespace: argocd
+  annotations:
+    # Slack notifications (requires Argo CD Notifications controller)
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: tetris-alerts
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: tetris-alerts
+    notifications.argoproj.io/subscribe.on-health-degraded.slack: tetris-alerts
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vishehemant/Argo-Harbor-Vault.git
+    targetRevision: cursor/harbor-argo-vault-integration-aad0
+    path: helm-chart
+    helm:
+      valueFiles:
+        - values/uat/values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tetris-uat
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+  # NO automated sync - manual sync via: argocd app sync tetris-uat
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tetris-prod
+  namespace: argocd
+  annotations:
+    # Slack notifications for Production
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: tetris-prod-alerts
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: tetris-prod-alerts
+    notifications.argoproj.io/subscribe.on-health-degraded.slack: tetris-prod-alerts
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vishehemant/Argo-Harbor-Vault.git
+    targetRevision: cursor/harbor-argo-vault-integration-aad0
+    path: helm-chart
+    helm:
+      valueFiles:
+        - values/prod/values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tetris-prod
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+  # NO automated sync - manual sync during change window: argocd app sync tetris-prod
