@@ -1,0 +1,18 @@
+replicaCount: 1
+environment: dev
+vaultPathPrefix: "secret/data/dev/tetris"
+image:
+  tag: "latest"
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 64Mi
+ingress:
+  enabled: true
+  host: tetris-dev.example.com
+  tls: false
+autoscaling:
+  enabled: false

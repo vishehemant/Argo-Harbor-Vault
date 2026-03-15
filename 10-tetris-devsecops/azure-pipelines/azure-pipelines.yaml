@@ -1,0 +1,240 @@
+# Tetris DevSecOps Pipeline
+#
+# Full pipeline with security scanning at every stage:
+#   1. Code Quality (lint)
+#   2. Unit Tests
+#   3. SAST — Static Application Security Testing (Semgrep)
+#   4. Dependency Audit (npm audit)
+#   5. Docker Build
+#   6. Image Scan (Trivy)
+#   7. Push to Harbor
+#   8. Deploy Dev → UAT (approval) → Prod (approval)
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include:
+      - '10-tetris-devsecops/app/**'
+      - '10-tetris-devsecops/docker/**'
+
+variables:
+  - group: harbor-credentials
+  - name: imageRepo
+    value: 'tetris/game'
+  - name: tag
+    value: '$(Build.BuildId)'
+  - name: chartPath
+    value: '10-tetris-devsecops/helm-chart'
+
+stages:
+  # ═══════════════════════════════════════════
+  # STAGE 1: SECURITY & QUALITY CHECKS
+  # ═══════════════════════════════════════════
+  - stage: SecurityChecks
+    displayName: 'Security & Quality Checks'
+    jobs:
+      - job: CodeQuality
+        displayName: 'Lint + SAST + Dependency Audit'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          # ── Step 1: Lint — catches code quality issues early ──
+          - script: |
+              echo "==> Running ESLint..."
+              npx eslint 10-tetris-devsecops/app/src/*.js --no-eslintrc \
+                --rule '{"no-unused-vars":"warn","no-undef":"error"}' || true
+              echo "Lint complete."
+            displayName: 'ESLint — Code Quality'
+
+          # ── Step 2: SAST — Static Application Security Testing ──
+          # Scans source code for security vulnerabilities
+          # (SQL injection, XSS, hardcoded secrets, etc.)
+          - script: |
+              echo "==> Running Semgrep SAST scan..."
+              pip install semgrep
+              semgrep --config=auto 10-tetris-devsecops/app/src/ \
+                --severity ERROR --json > sast-results.json || true
+              echo "SAST scan complete. Results saved to sast-results.json"
+              cat sast-results.json | python3 -m json.tool | head -50
+            displayName: 'Semgrep — SAST Scan'
+
+          # ── Step 3: Dependency Audit — check for vulnerable packages ──
+          - script: |
+              echo "==> Running npm audit..."
+              cd 10-tetris-devsecops/app
+              npm audit --audit-level=critical || true
+              echo "Dependency audit complete."
+            displayName: 'npm audit — Dependency Check'
+
+  # ═══════════════════════════════════════════
+  # STAGE 2: BUILD, SCAN, PUSH
+  # ═══════════════════════════════════════════
+  - stage: Build
+    displayName: 'Build, Scan & Push'
+    dependsOn: SecurityChecks
+    jobs:
+      - job: BuildScanPush
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          # ── Step 4: Build Docker image ──
+          - task: Docker@2
+            displayName: 'Docker Build'
+            inputs:
+              command: build
+              repository: '$(imageRepo)'
+              dockerfile: '10-tetris-devsecops/docker/Dockerfile'
+              buildContext: '10-tetris-devsecops'
+              tags: |
+                $(tag)
+                latest
+
+          # ── Step 5: Trivy Image Scan ──
+          # Scans the built image for OS-level and library vulnerabilities
+          # --exit-code 1 fails the pipeline if critical/high CVEs are found
+          - script: |
+              echo "==> Running Trivy image scan..."
+              docker run --rm \
+                -v /var/run/docker.sock:/var/run/docker.sock \
+                aquasec/trivy:latest image \
+                --severity CRITICAL,HIGH \
+                --exit-code 1 \
+                --ignore-unfixed \
+                --format table \
+                $(HARBOR_URL)/$(imageRepo):$(tag)
+              echo "Image scan passed — no critical vulnerabilities."
+            displayName: 'Trivy — Image Vulnerability Scan'
+
+          # ── Step 6: Push to Harbor ──
+          - task: Docker@2
+            displayName: 'Login to Harbor'
+            inputs:
+              command: login
+              containerRegistry: 'harbor-service-connection'
+
+          - task: Docker@2
+            displayName: 'Push to Harbor'
+            inputs:
+              command: push
+              repository: '$(imageRepo)'
+              tags: |
+                $(tag)
+                latest
+
+          # ── Step 7: Generate SBOM (Software Bill of Materials) ──
+          - script: |
+              echo "==> Generating SBOM..."
+              docker run --rm \
+                -v /var/run/docker.sock:/var/run/docker.sock \
+                aquasec/trivy:latest image \
+                --format spdx-json \
+                --output /dev/stdout \
+                $(HARBOR_URL)/$(imageRepo):$(tag) > sbom.json
+              echo "SBOM generated. Useful for supply chain compliance."
+            displayName: 'Generate SBOM'
+
+          - script: echo "##vso[task.setvariable variable=imageTag;isOutput=true]$(tag)"
+            name: setTag
+
+  # ═══════════════════════════════════════════
+  # STAGE 3: DEPLOY DEV (automatic)
+  # ═══════════════════════════════════════════
+  - stage: DeployDev
+    displayName: 'Deploy to Dev'
+    dependsOn: Build
+    variables:
+      imageTag: $[ stageDependencies.Build.BuildScanPush.outputs['setTag.imageTag'] ]
+    jobs:
+      - job: UpdateDev
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: self
+            persistCredentials: true
+
+          - script: |
+              sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+              sudo chmod +x /usr/local/bin/yq
+              yq e '.image.tag = "$(imageTag)"' -i $(chartPath)/values/dev.yaml
+            displayName: 'Update dev image tag'
+
+          - script: |
+              git config user.email "azure-pipelines@dev.azure.com"
+              git config user.name "Azure Pipelines"
+              git add -A
+              git diff --staged --quiet || git commit -m "ci(dev): tetris $(imageTag) [skip ci]"
+              git push origin HEAD:main
+            displayName: 'Commit & push → Argo CD auto-syncs dev'
+
+  # ═══════════════════════════════════════════
+  # STAGE 4: DEPLOY UAT (approval required)
+  # ═══════════════════════════════════════════
+  - stage: DeployUAT
+    displayName: 'Deploy to UAT'
+    dependsOn: DeployDev
+    variables:
+      imageTag: $[ stageDependencies.Build.BuildScanPush.outputs['setTag.imageTag'] ]
+    jobs:
+      - deployment: UAT
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'UAT'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  persistCredentials: true
+                - script: |
+                    sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+                    sudo chmod +x /usr/local/bin/yq
+                    yq e '.image.tag = "$(imageTag)"' -i $(chartPath)/values/uat.yaml
+                  displayName: 'Update UAT image tag'
+                - script: |
+                    git config user.email "azure-pipelines@dev.azure.com"
+                    git config user.name "Azure Pipelines"
+                    git add -A
+                    git diff --staged --quiet || git commit -m "ci(uat): tetris $(imageTag) [skip ci]"
+                    git push origin HEAD:main
+                  displayName: 'Commit & push'
+                - script: echo "Run 'argocd app sync tetris-uat' to deploy"
+                  displayName: 'Manual Argo CD sync reminder'
+
+  # ═══════════════════════════════════════════
+  # STAGE 5: DEPLOY PROD (approval required)
+  # ═══════════════════════════════════════════
+  - stage: DeployProd
+    displayName: 'Deploy to Production'
+    dependsOn: DeployUAT
+    variables:
+      imageTag: $[ stageDependencies.Build.BuildScanPush.outputs['setTag.imageTag'] ]
+    jobs:
+      - deployment: Production
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'Production'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  persistCredentials: true
+                - script: |
+                    sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+                    sudo chmod +x /usr/local/bin/yq
+                    yq e '.image.tag = "$(imageTag)"' -i $(chartPath)/values/prod.yaml
+                  displayName: 'Update prod image tag'
+                - script: |
+                    git config user.email "azure-pipelines@dev.azure.com"
+                    git config user.name "Azure Pipelines"
+                    git add -A
+                    git diff --staged --quiet || git commit -m "ci(prod): tetris $(imageTag) [skip ci]"
+                    git push origin HEAD:main
+                  displayName: 'Commit & push'
+                - script: |
+                    echo "============================================"
+                    echo "  Run during approved change window:"
+                    echo "    argocd app sync tetris-prod"
+                    echo "============================================"
+                  displayName: 'Manual Argo CD sync during change window'

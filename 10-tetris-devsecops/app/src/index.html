@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tetris — DevSecOps Demo</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>TETRIS</h1>
+            <p class="subtitle" id="env-badge">DevSecOps on Kubernetes</p>
+        </div>
+
+        <div class="game-area">
+            <div class="side-panel left-panel">
+                <div class="info-box">
+                    <h3>SCORE</h3>
+                    <p id="score">0</p>
+                </div>
+                <div class="info-box">
+                    <h3>LEVEL</h3>
+                    <p id="level">1</p>
+                </div>
+                <div class="info-box">
+                    <h3>LINES</h3>
+                    <p id="lines">0</p>
+                </div>
+            </div>
+
+            <canvas id="board" width="300" height="600"></canvas>
+
+            <div class="side-panel right-panel">
+                <div class="info-box">
+                    <h3>NEXT</h3>
+                    <canvas id="next" width="100" height="100"></canvas>
+                </div>
+                <div class="info-box">
+                    <h3>CONTROLS</h3>
+                    <p class="controls-text">
+                        ← → Move<br>
+                        ↑ Rotate<br>
+                        ↓ Soft Drop<br>
+                        Space Hard Drop<br>
+                        P Pause
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div class="buttons">
+            <button id="start-btn" onclick="startGame()">START GAME</button>
+            <button id="pause-btn" onclick="togglePause()" disabled>PAUSE</button>
+        </div>
+
+        <div class="footer">
+            <p>
+                Version: <span id="app-version">local</span> |
+                Environment: <span id="app-env">local</span> |
+                Deployed via Argo CD + Vault + Harbor
+            </p>
+        </div>
+    </div>
+
+    <script src="tetris.js"></script>
+    <script>
+        fetch('/api/info')
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('app-version').textContent = data.version || 'local';
+                document.getElementById('app-env').textContent = data.environment || 'local';
+                const badge = document.getElementById('env-badge');
+                if (data.environment) {
+                    badge.textContent = data.environment.toUpperCase();
+                    badge.classList.add('env-' + data.environment);
+                }
+            })
+            .catch(() => {});
+    </script>
+</body>
+</html>

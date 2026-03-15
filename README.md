@@ -40,6 +40,7 @@ A comprehensive collection of examples demonstrating how **Harbor** (container r
 | [07 - Full Integration](./07-full-integration/) | End-to-end CI/CD pipeline | GitHub Actions CI, Harbor image storage, Vault secret injection, Argo CD deployment |
 | [08 - Real-World Setup](./08-real-world-setup/) | Production-grade multi-env setup | Azure Pipelines, approval gates, manual sync, Helm templates, Prometheus + Grafana |
 | [09 - Complete Lab](./09-complete-lab/) | Full DevSecOps toolchain lab | Azure Pipelines + Harbor + JFrog + Vault + Argo CD + Grafana/Prometheus |
+| [10 - Tetris Project](./10-tetris-devsecops/) | End-to-end DevSecOps project | Playable Tetris game with full CI/CD, security scanning, multi-env deployment |
 
 ## Prerequisites
 

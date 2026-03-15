@@ -1,0 +1,10 @@
+node_modules
+.git
+*.md
+helm-chart
+azure-pipelines
+argocd
+vault-config
+monitoring
+security-scanning
+docs
