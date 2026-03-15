@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tetris</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="game-container">
+        <header class="game-header">
+            <h1 class="game-title">TETRIS</h1>
+            <div class="stats-panel">
+                <div class="stat">
+                    <span class="stat-label">SCORE</span>
+                    <span class="stat-value" id="score">0</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">LEVEL</span>
+                    <span class="stat-value" id="level">1</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">LINES</span>
+                    <span class="stat-value" id="lines">0</span>
+                </div>
+            </div>
+        </header>
+
+        <main class="game-main">
+            <div class="next-piece-panel">
+                <span class="panel-title">NEXT</span>
+                <canvas id="nextCanvas" width="80" height="80"></canvas>
+            </div>
+
+            <div class="board-wrapper">
+                <canvas id="gameCanvas"></canvas>
+                <div class="pause-overlay" id="pauseOverlay">
+                    <span class="pause-text">PAUSED</span>
+                    <span class="pause-hint">Press P to resume</span>
+                </div>
+                <div class="game-over-overlay" id="gameOverOverlay">
+                    <span class="game-over-text">GAME OVER</span>
+                    <span class="game-over-score" id="finalScore">0</span>
+                    <button class="restart-btn" id="restartBtn">PLAY AGAIN</button>
+                </div>
+            </div>
+        </main>
+
+        <div class="controls-hint">
+            <span>← → Move</span>
+            <span>↑ Rotate</span>
+            <span>↓ Soft Drop</span>
+            <span>Space Hard Drop</span>
+            <span>P Pause</span>
+        </div>
+
+        <footer class="game-footer">
+            <span id="version">v1.0.0</span>
+            <span class="env-badge" id="envBadge">dev</span>
+            <span id="hostname">-</span>
+        </footer>
+    </div>
+
+    <script src="tetris.js"></script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+replicaCount: 1
+
+environment: dev
+appVersion: "1.0.0"
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 16Mi
+  limits:
+    cpu: 100m
+    memory: 32Mi
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: tetris-dev.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+autoscaling:
+  enabled: false

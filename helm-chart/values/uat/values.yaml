@@ -1,0 +1,24 @@
+replicaCount: 2
+
+environment: uat
+appVersion: "1.0.0"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 64Mi
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: tetris-uat.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+autoscaling:
+  enabled: false

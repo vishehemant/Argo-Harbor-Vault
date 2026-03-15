@@ -1,0 +1,31 @@
+replicaCount: 3
+
+environment: production
+appVersion: "1.0.0"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: tetris.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: tetris-tls
+      hosts:
+        - tetris.example.com
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
